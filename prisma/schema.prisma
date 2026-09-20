@@ -1,0 +1,651 @@
+// RUTHEX Lending Institution — Prisma schema
+//
+// Engineered to satisfy the Bank of Zambia NDT MFI requirements documented in
+// the research deliverable (see docs/regulatory-mapping.md in this repo).
+// Notes on choices:
+//   - SQLite for frictionless local dev (the same schema runs on Postgres in
+//     production — only the datasource URL changes).
+//   - SQLite does not support enums; we use string fields with validation in
+//     src/lib/types.ts and application-level guards.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// -----------------------------------------------------------------------------
+// IDENTITY, ACCESS, AUDIT
+// -----------------------------------------------------------------------------
+
+model User {
+  id              String   @id @default(cuid())
+  email           String   @unique
+  passwordHash    String
+  fullName        String
+  phone           String?
+  role            String   // ADMIN | BRANCH_MANAGER | CREDIT_OFFICER | CASHIER | COMPLIANCE_OFFICER | AUDITOR | LOAN_OFFICER
+  branchId        String?
+  branch          Branch?  @relation(fields: [branchId], references: [id])
+  active          Boolean  @default(true)
+  failedLoginCount Int     @default(0)
+  lastLoginAt     DateTime?
+  fitProperStatus String?  // PASSED | PENDING | FAILED — BOZ fit-and-proper for senior officers
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  applicationsAssigned  LoanApplication[] @relation("AssignedOfficer")
+  approvalsMade         LoanApproval[]
+  repaymentsRecorded    Repayment[]
+  audits                AuditLog[]
+  notifications         Notification[]
+
+  @@index([role])
+  @@index([branchId])
+}
+
+model Branch {
+  id          String   @id @default(cuid())
+  name        String
+  code        String   @unique
+  province    String?
+  city        String?
+  address     String?
+  phone       String?
+  email       String?
+  bozBranchCode String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  users      User[]
+  borrowers  Borrower[]
+  loans      Loan[]
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  occurredAt DateTime @default(now())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id])
+  action     String   // LOGIN | CREATE_BORROWER | APPROVE_LOAN | RECORD_REPAYMENT | FILE_CTR | FILE_STR | etc.
+  entity     String   // BORROWER | LOAN | REPAYMENT | CTR | STR | USER
+  entityId   String?
+  ipAddress  String?
+  userAgent  String?
+  // Hash of previous record in this log — chain integrity
+  prevHash   String?
+  hash       String?  // SHA-256 of (prevHash || action || entityId || occurredAt || userId)
+  meta       String?  // JSON-serialized contextual data
+
+  @@index([entity, entityId])
+  @@index([occurredAt])
+  @@index([userId])
+}
+
+// -----------------------------------------------------------------------------
+// BORROWER, KYC, DOCUMENTS
+// -----------------------------------------------------------------------------
+
+model Borrower {
+  id            String   @id @default(cuid())
+  // Identity
+  borrowerNo    String   @unique  // internal reference number
+  firstName     String
+  lastName      String
+  middleName    String?
+  dateOfBirth   DateTime?
+  gender        String?  // M | F
+  maritalStatus String?
+  nationality   String   @default("Zambian")
+  // KYC numbers
+  nrcNumber     String?  // National Registration Card (Zambia)
+  passportNumber String?
+  // Contact
+  phone         String
+  phoneAlt      String?
+  email         String?
+  // Address
+  addressLine1  String?
+  addressLine2  String?
+  city          String?
+  province      String?
+  district      String?
+  // Geolocation (loan officer geo-tagged during intake)
+  geoLat        Float?
+  geoLng        Float?
+  // Employment / income
+  employmentStatus String?  // EMPLOYED | SELF_EMPLOYED | INFORMAL | STUDENT | RETIRED | UNEMPLOYED
+  employerName  String?
+  occupation    String?
+  monthlyIncomeZMW Float?
+  // KYC status
+  kycStatus     String   @default("PENDING")  // PENDING | IN_REVIEW | APPROVED | REJECTED | EXPIRED
+  kycRiskRating String   @default("MEDIUM")  // LOW | MEDIUM | HIGH | PROHIBITED
+  kycReviewedAt DateTime?
+  kycReviewerId String?
+  kycExpiresAt  DateTime?
+  pepFlag       Boolean  @default(false) // politically exposed person
+  sanctionsFlag Boolean  @default(false)
+  // Beneficial ownership
+  isBeneficialOwner Boolean @default(false)  // if true, person is a UBO of another entity
+  // Status
+  status        String   @default("ACTIVE")  // ACTIVE | BLACKLISTED | DECEASED | CLOSED
+  blacklistReason String?
+  // Branch
+  branchId      String?
+  branch        Branch?  @relation(fields: [branchId], references: [id])
+  // Loan officer
+  assignedOfficerId String?
+  // Metadata
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  createdById   String?
+  notes         String?
+
+  addresses     BorrowerAddress[]
+  documents     KycDocument[]
+  uboEntries    BeneficialOwner[]   @relation("UboOwner")
+  uboLinks      BeneficialOwner[]   @relation("UboPerson")
+  nextOfKin     NextOfKin[]
+  loans         Loan[]
+  applications  LoanApplication[]
+  alerts        AmlAlert[]
+  notifications Notification[]
+  riskAssessments KycRiskAssessment[]
+
+  @@index([nrcNumber])
+  @@index([phone])
+  @@index([lastName, firstName])
+  @@index([kycStatus])
+  @@index([branchId])
+}
+
+model BorrowerAddress {
+  id          String   @id @default(cuid())
+  borrowerId  String
+  borrower    Borrower @relation(fields: [borrowerId], references: [id])
+  type        String   // HOME | WORK | BUSINESS | POSTAL
+  line1       String
+  line2       String?
+  city        String?
+  province    String?
+  country     String   @default("Zambia")
+  fromDate    DateTime?
+  toDate      DateTime?
+  isCurrent   Boolean  @default(true)
+
+  @@index([borrowerId])
+}
+
+model KycDocument {
+  id            String   @id @default(cuid())
+  borrowerId    String
+  borrower      Borrower @relation(fields: [borrowerId], references: [id])
+  type          String   // NRC | PASSPORT | UTILITY_BILL | PAYSLIP | BANK_STATEMENT | BUSINESS_REG | TIN_CERT | SELFIE | SIGNATURE | OTHER
+  documentNo    String?  // visible ID number on the document
+  issuer        String?  // issuing authority
+  issuedOn      DateTime?
+  expiresOn     DateTime?
+  // File storage metadata
+  fileName      String
+  fileMime      String
+  fileSize      Int
+  storagePath   String   // local path or S3 key — never expose to client
+  // Hash chain for tamper-evidence
+  fileSha256    String
+  // Verification
+  ocrText       String?  // extracted text for searchability
+  verified      Boolean  @default(false)
+  verifiedAt    DateTime?
+  verifiedById  String?
+  // Risk signals from OCR/verification
+  riskNotes     String?
+  createdAt     DateTime @default(now())
+
+  @@index([borrowerId])
+  @@index([type])
+}
+
+// Ultimate Beneficial Owner (UBO) record — for entity borrowers / groups
+model BeneficialOwner {
+  id            String   @id @default(cuid())
+  // The entity borrower that has this UBO
+  entityBorrowerId String
+  entityBorrower   Borrower @relation("UboOwner", fields: [entityBorrowerId], references: [id])
+  // The natural person UBO
+  uboBorrowerId String
+  uboBorrower   Borrower @relation("UboPerson", fields: [uboBorrowerId], references: [id])
+  ownershipPct  Float    // percentage ownership
+  acquiredOn    DateTime?
+  verified      Boolean  @default(false)
+  verifiedAt    DateTime?
+  verifiedById  String?
+  notes         String?
+
+  @@unique([entityBorrowerId, uboBorrowerId])
+  @@index([uboBorrowerId])
+}
+
+model NextOfKin {
+  id          String   @id @default(cuid())
+  borrowerId  String
+  borrower    Borrower @relation(fields: [borrowerId], references: [id])
+  fullName    String
+  relationship String
+  phone       String
+  address     String?
+  isPrimary   Boolean  @default(false)
+
+  @@index([borrowerId])
+}
+
+model KycRiskAssessment {
+  id            String   @id @default(cuid())
+  borrowerId    String
+  borrower      Borrower @relation(fields: [borrowerId], references: [id])
+  assessedAt    DateTime @default(now())
+  assessedById  String?
+  riskRating    String   // LOW | MEDIUM | HIGH | PROHIBITED
+  // Score breakdown
+  countryRiskScore      Int   @default(0)
+  productRiskScore      Int   @default(0)
+  customerRiskScore     Int   @default(0)
+  transactionRiskScore  Int   @default(0)
+  totalScore            Int   @default(0)
+  // Findings (JSON array)
+  findings       String?
+  // Decision
+  decision       String   // APPROVE | ENHANCED_DD | DECLINE
+  decisionReason String?
+  reviewDate     DateTime?
+
+  @@index([borrowerId])
+}
+
+// -----------------------------------------------------------------------------
+// LOANS
+// -----------------------------------------------------------------------------
+
+model LoanProduct {
+  id              String   @id @default(cuid())
+  name            String   @unique
+  description     String?
+  // Pricing
+  interestRateAnnualPct Float  // e.g. 36.0 means 36% per annum
+  interestMethod  String   // FLAT | REDUCING_BALANCE | COMPOUND
+  // Term
+  minTermMonths   Int      @default(1)
+  maxTermMonths   Int      @default(36)
+  // Amount
+  minAmountZMW    Float
+  maxAmountZMW    Float
+  // Disbursement
+  disbursementChannels String   // CSV: CASH | MOBILE_MONEY | BANK_TRANSFER
+  // Repayment
+  repaymentFrequency String  // DAILY | WEEKLY | BIWEEKLY | MONTHLY | LUMP_SUM
+  gracePeriodDays  Int      @default(0)
+  // Fees
+  applicationFeeZMW  Float  @default(0)
+  processingFeePct   Float  @default(0)
+  // Risk
+  requiresCollateral Boolean @default(false)
+  // Status
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now())
+
+  loans          Loan[]
+  applications   LoanApplication[]
+}
+
+model LoanApplication {
+  id              String   @id @default(cuid())
+  applicationNo   String   @unique
+  borrowerId      String
+  borrower        Borrower @relation(fields: [borrowerId], references: [id])
+  productId       String
+  product         LoanProduct @relation(fields: [productId], references: [id])
+  // Request terms
+  requestedAmountZMW Float
+  requestedTermMonths Int
+  purpose         String   // BUSINESS | SCHOOL_FEES | MEDICAL | HOME_IMPROVEMENT | AGRICULTURE | OTHER
+  purposeDetail   String?
+  // Credit assessment
+  creditScore     Int?     // 0-1000
+  creditGrade     String?  // A | B | C | D | E
+  creditFactors   String?  // JSON
+  // Decision
+  status          String   @default("DRAFT")  // DRAFT | SUBMITTED | UNDER_REVIEW | APPROVED | REJECTED | WITHDRAWN | DISBURSED
+  approvedAmountZMW Float?
+  approvedTermMonths Int?
+  approvedRatePct  Float?
+  rejectionReason String?
+  // Workflow
+  assignedOfficerId String?
+  assignedOfficer User?   @relation("AssignedOfficer", fields: [assignedOfficerId], references: [id])
+  submittedAt     DateTime?
+  decisionedAt    DateTime?
+  decidedById     String?
+  // Disbursement (post-approval)
+  disbursedAt     DateTime?
+  disbursementMethod String?
+  // Conversion to active loan
+  loanId          String?  @unique
+  loan            Loan?    @relation(fields: [loanId], references: [id])
+  // Alternative-data inputs (for the innovative scoring engine)
+  altDataSnapshot String?  // JSON snapshot of inputs at decision time
+  // Audit
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  approvals       LoanApproval[]
+
+  @@index([borrowerId])
+  @@index([status])
+}
+
+model LoanApproval {
+  id            String   @id @default(cuid())
+  applicationId String
+  application   LoanApplication @relation(fields: [applicationId], references: [id])
+  approverId    String
+  approver      User     @relation(fields: [approverId], references: [id])
+  level         String   // CREDIT_OFFICER | BRANCH_MANAGER | CREDIT_COMMITTEE | BOARD
+  decision      String   // APPROVED | REJECTED | ESCALATED
+  reason        String?
+  decidedAt     DateTime @default(now())
+
+  @@index([applicationId])
+}
+
+model Loan {
+  id              String   @id @default(cuid())
+  loanNo          String   @unique
+  borrowerId      String
+  borrower        Borrower @relation(fields: [borrowerId], references: [id])
+  productId       String
+  product         LoanProduct @relation(fields: [productId], references: [id])
+  branchId        String?
+  branch          Branch?  @relation(fields: [branchId], references: [id])
+  // Terms
+  principalZMW    Float
+  interestRateAnnualPct Float
+  interestMethod  String
+  termMonths      Int
+  // Disbursement
+  disbursedAt     DateTime?
+  disbursementChannel String?  // CASH | MOBILE_MONEY | BANK_TRANSFER
+  disbursementRef String?    // mobile money txn id or bank ref
+  // Repayment
+  repaymentFrequency String
+  installmentZMW  Float     // calculated
+  totalRepayableZMW Float   // principal + interest + fees
+  // Schedule
+  firstPaymentDue DateTime?
+  maturityDate    DateTime?
+  // Status
+  status          String   @default("PENDING_DISBURSEMENT")  // PENDING_DISBURSEMENT | ACTIVE | IN_ARREARS | RESTRUCTURED | WRITTEN_OFF | CLOSED | DEFAULTED
+  daysInArrears   Int      @default(0)
+  // Outstanding balances
+  principalOutstandingZMW Float  @default(0)
+  interestOutstandingZMW   Float  @default(0)
+  feesOutstandingZMW       Float  @default(0)
+  totalOutstandingZMW      Float  @default(0)
+  // Provisioning (IFRS 9-aligned staging)
+  ifrs9Stage      Int      @default(1)  // 1 | 2 | 3
+  eclProvisionZMW Float    @default(0)
+  // Restructuring
+  restructureCount Int     @default(0)
+  // Collateral
+  collateral      String?
+  collateralValueZMW Float?
+  // Pricing overrides
+  pricingOverrideReason String?
+  // Audit
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  closedAt        DateTime?
+
+  schedule        RepaymentSchedule[]
+  repayments      Repayment[]
+  application     LoanApplication?
+  alerts          AmlAlert[]
+
+  @@index([borrowerId])
+  @@index([status])
+  @@index([branchId])
+  @@index([ifrs9Stage])
+}
+
+model RepaymentSchedule {
+  id            String   @id @default(cuid())
+  loanId        String
+  loan          Loan     @relation(fields: [loanId], references: [id])
+  installmentNo Int
+  dueDate       DateTime
+  principalDue  Float
+  interestDue   Float
+  feesDue       Float
+  totalDue      Float
+  // Actuals
+  principalPaid Float    @default(0)
+  interestPaid  Float    @default(0)
+  feesPaid      Float    @default(0)
+  totalPaid     Float    @default(0)
+  paidAt        DateTime?
+  status        String   @default("PENDING")  // PENDING | PARTIAL | PAID | OVERDUE | WAIVED
+
+  @@unique([loanId, installmentNo])
+  @@index([dueDate, status])
+}
+
+model Repayment {
+  id            String   @id @default(cuid())
+  receiptNo     String   @unique
+  loanId        String
+  loan          Loan     @relation(fields: [loanId], references: [id])
+  installmentId String?
+  recordedById  String
+  recordedBy    User     @relation(fields: [recordedById], references: [id])
+  // Amount breakdown
+  principalPaidZMW Float
+  interestPaidZMW  Float
+  feesPaidZMW      Float
+  totalPaidZMW     Float
+  // Method
+  paymentMethod  String   // CASH | MOBILE_MONEY | BANK_TRANSFER | CHEQUE | OFFSET
+  paymentChannel String?  // MTN | AIRTEL | ZAMTEL | ZANACO | etc.
+  // Reference
+  externalRef    String?  // mobile money txn id, cheque no, etc.
+  // Payer (if not the borrower — e.g. employer payroll deduction)
+  paidByName     String?
+  paidByRelation String?
+  // Status
+  status         String   @default("POSTED")  // POSTED | REVERSED | PENDING_CONFIRM
+  reversedAt     DateTime?
+  reversedReason String?
+  // AML flagging
+  triggersCtr    Boolean  @default(false)
+  triggersStr    Boolean  @default(false)
+  // Audit
+  receivedAt     DateTime @default(now())
+  postedAt       DateTime @default(now())
+  notes          String?
+
+  mobileMoneyTxn MobileMoneyTransaction?
+
+  @@index([loanId])
+  @@index([receivedAt])
+}
+
+// -----------------------------------------------------------------------------
+// MOBILE MONEY
+// -----------------------------------------------------------------------------
+
+model MobileMoneyTransaction {
+  id            String   @id @default(cuid())
+  provider      String   // MTN | AIRTEL | ZAMTEL | MOCK
+  externalId    String?  // provider's txn id
+  direction     String   // INBOUND | OUTBOUND
+  amountZMW     Float
+  feesZMW       Float    @default(0)
+  msisdn        String   // customer's mobile number
+  accountRef    String?  // e.g. loanNo
+  status        String   @default("PENDING")  // PENDING | SUCCESSFUL | FAILED | EXPIRED | CANCELLED
+  failureReason String?
+  // Linkage
+  repaymentId   String?  @unique
+  repayment     Repayment? @relation(fields: [repaymentId], references: [id])
+  // Webhook signature
+  webhookSignature String?
+  // Audit
+  initiatedAt   DateTime @default(now())
+  confirmedAt   DateTime?
+  rawCallback   String?
+
+  @@index([externalId])
+  @@index([status])
+}
+
+// -----------------------------------------------------------------------------
+// AML / CFT
+// -----------------------------------------------------------------------------
+
+model AmlAlert {
+  id            String   @id @default(cuid())
+  alertType     String   // CTR | STR | SANCTIONS_HIT | KYC_RISK | UNUSUAL_PATTERN
+  severity      String   // LOW | MEDIUM | HIGH | CRITICAL
+  // Source reference (one of these depending on alert type)
+  borrowerId    String?
+  borrower      Borrower? @relation(fields: [borrowerId], references: [id])
+  loanId        String?
+  loan          Loan?    @relation(fields: [loanId], references: [id])
+  repaymentId   String?
+  // Snapshot
+  triggeredAt   DateTime @default(now())
+  ruleCode      String   // e.g. CTR_THRESHOLD_USD_10K, PEP_HIT, STRUCTURING, etc.
+  description   String
+  evidenceJson  String   // JSON payload with thresholds met, counterparties, etc.
+  // Workflow
+  status        String   @default("OPEN")  // OPEN | INVESTIGATING | REPORTED_TO_FIC | DISMISSED | ESCALATED
+  reviewedAt    DateTime?
+  reviewedById  String?
+  resolutionNotes String?
+  ficReportId   String?  // -> CtrRecord / StrRecord
+  // File (e.g., FIC report submission acknowledgement)
+  evidencePath  String?
+
+  ctrRecord     CtrRecord?
+  strRecord     StrRecord?
+
+  @@index([status])
+  @@index([alertType])
+  @@index([triggeredAt])
+}
+
+model CtrRecord {
+  id            String   @id @default(cuid())
+  alertId       String   @unique
+  alert         AmlAlert @relation(fields: [alertId], references: [id])
+  // Customer
+  borrowerId    String?
+  customerName  String
+  customerNrc   String?
+  // Transaction
+  amountZMW     Float
+  amountUSD     Float
+  transactionDate DateTime
+  transactionType String  // DEPOSIT | WITHDRAWAL | TRANSFER
+  // Status
+  status        String   @default("DRAFT")  // DRAFT | SUBMITTED_TO_FIC | ACKNOWLEDGED
+  submittedAt   DateTime?
+  ficRef        String?
+  // XML / payload for goAML
+  goamlXmlPath  String?
+
+  @@index([transactionDate])
+}
+
+model StrRecord {
+  id            String   @id @default(cuid())
+  alertId       String   @unique
+  alert         AmlAlert @relation(fields: [alertId], references: [id])
+  // Subject
+  borrowerId    String?
+  subjectName   String
+  // Suspicion
+  suspicionSummary String  // text describing what was observed
+  suspicionType String   // ML | TF | PF | FRAUD | OTHER
+  amountInvolvedZMW Float?
+  // Filings
+  filedAt       DateTime?
+  filedById     String?
+  ficRef        String?
+  // Status
+  status        String   @default("DRAFT")  // DRAFT | SUBMITTED_TO_FIC | ACKNOWLEDGED | CLOSED
+  // STR filing deadline is 2 working days per FIC guidelines
+  filingDeadline DateTime?
+
+  @@index([status])
+}
+
+// -----------------------------------------------------------------------------
+// NOTIFICATIONS
+// -----------------------------------------------------------------------------
+
+model Notification {
+  id          String   @id @default(cuid())
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id])
+  borrowerId  String?
+  borrower    Borrower? @relation(fields: [borrowerId], references: [id])
+  channel     String   // SMS | EMAIL | WHATSAPP | IN_APP | USSD
+  status      String   @default("PENDING")  // PENDING | SENT | FAILED
+  recipient   String?  // phone / email / session id
+  subject     String?
+  body        String
+  relatedEntity String? // LOAN | REPAYMENT | AML_ALERT | APPLICATION
+  relatedEntityId String?
+  scheduledAt DateTime?
+  sentAt      DateTime?
+  failureReason String?
+  createdAt   DateTime @default(now())
+
+  @@index([status])
+  @@index([recipient])
+  @@index([createdAt])
+}
+
+// -----------------------------------------------------------------------------
+// BOZ REGULATORY REPORTING SNAPSHOTS
+// -----------------------------------------------------------------------------
+
+model BozReport {
+  id          String   @id @default(cuid())
+  periodStart DateTime
+  periodEnd   DateTime
+  reportType  String   // CAPITAL_ADEQUACY | LIQUIDITY | ASSET_QUALITY | LARGE_EXPOSURES | RELATED_PARTY | MONTHLY_PRUDENTIAL
+  // Snapshot data (JSON, signed)
+  payloadJson String
+  // Aggregates for quick query
+  totalCapitalZMW      Float?
+  totalRiskWeightedAssetsZMW Float?
+  capitalAdequacyRatio Float?
+  liquidAssetsZMW      Float?
+  liquidityRatio       Float?
+  nplRatio             Float?
+  // Submission
+  status       String   @default("DRAFT")  // DRAFT | SUBMITTED | ACKNOWLEDGED
+  submittedAt  DateTime?
+  acknowledgedAt DateTime?
+  generatedAt  DateTime @default(now())
+  generatedById String?
+  // Hash for tamper-evidence
+  payloadSha256 String?
+  notes        String?
+
+  @@index([reportType, periodEnd])
+  @@index([status])
+}
