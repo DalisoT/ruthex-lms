@@ -12,7 +12,8 @@
  * filing deadline (per FIC Act).
  */
 import { prisma } from './db';
-import { openStr, USD_TO_ZMW, CTR_THRESHOLD_USD } from './aml';
+import { openStr, USD_TO_ZMW } from './aml';
+import { CTR_THRESHOLD_USD } from './types';
 
 /**
  * STRUCTURING — pattern: 2+ transactions within 7 days, each individually below

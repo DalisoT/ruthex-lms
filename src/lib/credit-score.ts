@@ -62,7 +62,7 @@ export function computeCreditScore(input: AltDataInputs): CreditScoreResult {
 
   const factors = [
     { name: 'Mobile money inflow consistency', weight: WEIGHTS.mmConsistency, value: input.mobileMoneyInflowConsistencyScore, contribution: WEIGHTS.mmConsistency * input.mobileMoneyInflowConsistencyScore },
-    { name: 'Utility payment regularity', weight: WEIGHTS.utilityRegularity, value: input.utilityRegularityScore, contribution: WEIGHTS.utilityRegularity * input.utilityPaymentRegularityScore },
+    { name: 'Utility payment regularity', weight: WEIGHTS.utilityRegularity, value: input.utilityPaymentRegularityScore, contribution: WEIGHTS.utilityRegularity * input.utilityPaymentRegularityScore },
     { name: 'Employer stability', weight: WEIGHTS.employerStability, value: input.employerStabilityScore, contribution: WEIGHTS.employerStability * input.employerStabilityScore },
     { name: 'Tenure in business', weight: WEIGHTS.monthsInBusiness, value: mob, contribution: WEIGHTS.monthsInBusiness * mob },
     { name: 'Inflow to loan ratio', weight: WEIGHTS.inflowToLoanRatio, value: ilRatio, contribution: WEIGHTS.inflowToLoanRatio * ilRatio },

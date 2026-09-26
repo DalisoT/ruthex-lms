@@ -2,6 +2,9 @@ import PublicApplyForm from './PublicApplyForm';
 import { prisma } from '@/lib/db';
 
 export const metadata = { title: 'Apply for a loan — RUTHEX' };
+// This page fetches live loan products from the DB — it must be rendered at
+// request time, not pre-rendered at build time (the DB is empty during build).
+export const dynamic = 'force-dynamic';
 
 export default async function PublicApplyPage() {
   const products = await prisma.loanProduct.findMany({

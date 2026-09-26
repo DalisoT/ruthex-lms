@@ -79,9 +79,9 @@ export class MockMobileMoneyAdapter implements MobileMoneyAdapter {
     return this.requestCollection(req);
   }
 
-  parseCallback(body: Record<string, unknown>) {
+  parseCallback(body: Record<string, unknown>): { externalId: string; status: 'SUCCESSFUL' | 'FAILED'; msisdn?: string; amountZMW?: number } | null {
     if (typeof body.externalId !== 'string') return null;
-    const status = body.status === 'SUCCESSFUL' ? 'SUCCESSFUL' : 'FAILED';
+    const status: 'SUCCESSFUL' | 'FAILED' = body.status === 'SUCCESSFUL' ? 'SUCCESSFUL' : 'FAILED';
     return {
       externalId: body.externalId,
       status,

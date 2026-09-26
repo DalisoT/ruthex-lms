@@ -106,7 +106,7 @@ export async function generateCtrRecord(input: {
   await prisma.ctrRecord.create({
     data: {
       alertId: input.alertId,
-      borrowerId: input.buyerId ?? null, // (typed)
+      borrowerId: input.borrowerId ?? null,
       customerName: input.customerName,
       customerNrc: input.customerNrc ?? null,
       amountZMW: input.amountZMW,

@@ -18,7 +18,7 @@ import { audit } from '@/lib/audit';
 const schema = z.object({
   sessionId: z.string(),
   serviceCode: z.string(),
-  phone: z.string(),
+  msisdn: z.string(),
   text: z.string().default(''),
 });
 
@@ -48,14 +48,14 @@ export async function POST(req: NextRequest) {
   await audit({
     action: 'USSD_SESSION',
     entity: 'USSD',
-    meta: { sessionId: parsed.data.sessionId, phone: parsed.data.phone, terminal: isTerminal },
+    meta: { sessionId: parsed.data.sessionId, msisdn: parsed.data.msisdn, terminal: isTerminal },
   });
 
   // Log to DB for audit / analytics
   await prisma.notification.create({
     data: {
       channel: 'USSD',
-      recipient: parsed.data.phone,
+      recipient: parsed.data.msisdn,
       body: response,
       status: 'SENT',
       sentAt: new Date(),

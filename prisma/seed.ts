@@ -67,9 +67,9 @@ async function main() {
 
   // 3. Loan products
   const products = [
-    { name: 'Payday Loan', description: 'Salary-backed consumer loan', interestRateAnnualPct: 36, interestMethod: 'REDUCING_BALANCE', minTermMonths: 1, maxTermMonths: 6, minAmountZMW: 500, maxAmountZMW: 50_000, repaymentFrequency: 'MONTHLY', requiresCollateral: false },
-    { name: 'SME Working Capital', description: 'Working capital for small and medium businesses', interestRateAnnualPct: 32, interestMethod: 'REDUCING_BALANCE', minTermMonths: 3, maxTermMonths: 36, minAmountZMW: 5_000, maxAmountZMW: 500_000, repaymentFrequency: 'MONTHLY', requiresCollateral: false },
-    { name: 'Asset Finance', description: 'Vehicle / equipment financing', interestRateAnnualPct: 24, interestMethod: 'REDUCING_BALANCE', minTermMonths: 6, maxTermMonths: 60, minAmountZMW: 20_000, maxAmountZMW: 2_000_000, repaymentFrequency: 'MONTHLY', requiresCollateral: true },
+    { name: 'Payday Loan',         description: 'Salary-backed consumer loan',           interestRateAnnualPct: 36, interestMethod: 'REDUCING_BALANCE', minTermMonths: 1, maxTermMonths: 6,  minAmountZMW: 500,     maxAmountZMW: 50_000,    disbursementChannels: 'MOBILE_MONEY,BANK_TRANSFER', repaymentFrequency: 'MONTHLY', requiresCollateral: false },
+    { name: 'SME Working Capital', description: 'Working capital for small and medium businesses', interestRateAnnualPct: 32, interestMethod: 'REDUCING_BALANCE', minTermMonths: 3, maxTermMonths: 36, minAmountZMW: 5_000,    maxAmountZMW: 500_000,   disbursementChannels: 'MOBILE_MONEY,BANK_TRANSFER', repaymentFrequency: 'MONTHLY', requiresCollateral: false },
+    { name: 'Asset Finance',       description: 'Vehicle / equipment financing',          interestRateAnnualPct: 24, interestMethod: 'REDUCING_BALANCE', minTermMonths: 6, maxTermMonths: 60, minAmountZMW: 20_000,   maxAmountZMW: 2_000_000, disbursementChannels: 'BANK_TRANSFER',             repaymentFrequency: 'MONTHLY', requiresCollateral: true  },
   ];
   for (const p of products) {
     await prisma.loanProduct.upsert({
@@ -169,7 +169,7 @@ async function main() {
         data: {
           receiptNo: 'RCT-0000001',
           loanId: loan.id,
-          recordedById: cashier?.id ?? creditOfficer?.id ?? null,
+          recordedById: cashier!.id,
           principalPaidZMW: 4170,
           interestPaidZMW: 180,
           feesPaidZMW: 0,
