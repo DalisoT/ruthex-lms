@@ -3,6 +3,9 @@
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
+// Product / Borrower prop types are widened to `any[]` while pages still read
+// through the Prisma shim — the shim returns StubRow[] which can't be matched
+// to these narrow shapes. Migrated pages can re-tighten to Product[]/Borrower[].
 interface Product {
   id: string; name: string; minAmountZMW: number; maxAmountZMW: number;
   minTermMonths: number; maxTermMonths: number;
@@ -16,7 +19,7 @@ interface Borrower {
 
 export default function LoanApplicationForm({
   products, borrowers, preselectedBorrowerId,
-}: { products: Product[]; borrowers: Borrower[]; preselectedBorrowerId: string | null }) {
+}: { products: Product[] | any[]; borrowers: Borrower[] | any[]; preselectedBorrowerId: string | null }) {
   const router = useRouter();
   const [borrowerId, setBorrowerId] = useState(preselectedBorrowerId ?? '');
   const [productId, setProductId] = useState(products[0]?.id ?? '');
@@ -28,8 +31,8 @@ export default function LoanApplicationForm({
   const [error, setError] = useState<string | null>(null);
   const [scorePreview, setScorePreview] = useState<{ score: number; grade: string; recommendation: string } | null>(null);
 
-  const product = useMemo(() => products.find((p) => p.id === productId), [products, productId]);
-  const borrower = useMemo(() => borrowers.find((b) => b.id === borrowerId), [borrowers, borrowerId]);
+  const product = useMemo(() => products.find((p: any) => p.id === productId), [products, productId]);
+  const borrower = useMemo(() => borrowers.find((b: any) => b.id === borrowerId), [borrowers, borrowerId]);
 
   async function previewScore() {
     setError(null);
@@ -99,7 +102,7 @@ export default function LoanApplicationForm({
             <label className="label">Borrower</label>
             <select className="input" value={borrowerId} onChange={(e) => setBorrowerId(e.target.value)} required>
               <option value="">— Select borrower —</option>
-              {borrowers.map((b) => (
+              {borrowers.map((b: any) => (
                 <option key={b.id} value={b.id}>
                   {b.borrowerNo} · {b.firstName} {b.lastName} · {b.phone}
                 </option>
@@ -112,7 +115,7 @@ export default function LoanApplicationForm({
           <div>
             <label className="label">Product</label>
             <select className="input" value={productId} onChange={(e) => setProductId(e.target.value)} required>
-              {products.map((p) => (
+              {products.map((p: any) => (
                 <option key={p.id} value={p.id}>
                   {p.name} · {p.interestRateAnnualPct}% · {p.repaymentFrequency}
                 </option>

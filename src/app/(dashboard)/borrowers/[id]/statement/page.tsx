@@ -1,5 +1,5 @@
 import { sql, eq, desc, asc, and, or, inArray, ne, gte, lte, gt, lt, isNull, like, ilike } from 'drizzle-orm';
-import { db } from '@/lib/db';
+import { db, prisma } from '@/lib/db';
 import { borrowers, loans, repayments, amlAlerts, auditLogs, users, branches, loanApplications, loanProducts, notifications } from '@/lib/db/schema';
 
 import { notFound } from 'next/navigation';
@@ -28,9 +28,9 @@ export default async function StatementPage({ params }: { params: { id: string }
   });
   if (!borrower) notFound();
 
-  const totalDisbursed = borrower.loans.reduce((s, l) => s + l.principalZMW, 0);
-  const totalRepaid = borrower.loans.reduce((s, l) => s + l.repayments.reduce((r, p) => r + p.totalPaidZMW, 0), 0);
-  const totalOutstanding = borrower.loans.reduce((s, l) => s + l.totalOutstandingZMW, 0);
+  const totalDisbursed = borrower.loans.reduce((s: any, l: any) => s + l.principalZMW, 0);
+  const totalRepaid = borrower.loans.reduce((s: any, l: any) => s + l.repayments.reduce((r: any, p: any) => r + p.totalPaidZMW, 0), 0);
+  const totalOutstanding = borrower.loans.reduce((s: any, l: any) => s + l.totalOutstandingZMW, 0);
 
   return (
     <div className="space-y-4">
@@ -53,7 +53,7 @@ export default async function StatementPage({ params }: { params: { id: string }
 
       {borrower.loans.length === 0 ? (
         <div className="card-padded text-center text-slate-500">No loans on file.</div>
-      ) : borrower.loans.map((loan) => (
+      ) : borrower.loans.map((loan: any) => (
         <div key={loan.id} className="space-y-3">
           <div className="card-padded">
             <div className="flex items-center justify-between">
@@ -76,7 +76,7 @@ export default async function StatementPage({ params }: { params: { id: string }
                 <tr><th>#</th><th>Due</th><th>Principal</th><th>Interest</th><th>Total</th><th>Status</th></tr>
               </thead>
               <tbody>
-                {loan.schedule.map((s) => (
+                {loan.schedule.map((s: any) => (
                   <tr key={s.id}>
                     <td>{s.installmentNo}</td>
                     <td className="text-xs">{formatDate(s.dueDate)}</td>
@@ -104,7 +104,7 @@ export default async function StatementPage({ params }: { params: { id: string }
               <table className="table-base responsive-table">
                 <thead><tr><th>Receipt</th><th>Date</th><th>Method</th><th className="text-right">Total</th></tr></thead>
                 <tbody>
-                  {loan.repayments.map((r) => (
+                  {loan.repayments.map((r: any) => (
                     <tr key={r.id}>
                       <td className="font-mono text-xs">{r.receiptNo}</td>
                       <td className="text-xs">{formatDate(r.receivedAt)}</td>

@@ -1,5 +1,5 @@
 import { sql, eq, desc, asc, and, or, inArray, ne, gte, lte, gt, lt, isNull, like, ilike } from 'drizzle-orm';
-import { db } from '@/lib/db';
+import { db, prisma } from '@/lib/db';
 import { borrowers, loans, repayments, amlAlerts, auditLogs, users, branches, loanApplications, loanProducts, notifications } from '@/lib/db/schema';
 
 import { verifyAuditChain } from '@/lib/audit';
@@ -91,7 +91,7 @@ export default async function AuditLogPage({ searchParams }: { searchParams: Sea
           <label className="label">User</label>
           <select className="input" name="userId" defaultValue={userId ?? ''}>
             <option value="">Anyone</option>
-            {users.map((u) => (
+            {users.map((u: any) => (
               <option key={u.id} value={u.id}>{u.fullName} ({u.email})</option>
             ))}
           </select>
@@ -115,7 +115,7 @@ export default async function AuditLogPage({ searchParams }: { searchParams: Sea
           <tbody>
             {rows.length === 0 ? (
               <tr><td colSpan={7} className="text-center py-8 text-slate-500">No audit entries match the filter.</td></tr>
-            ) : rows.map((r) => (
+            ) : rows.map((r: any) => (
               <tr key={r.id}>
                 <td className="text-xs whitespace-nowrap">{formatDateTime(r.occurredAt)}</td>
                 <td className="text-xs">{r.user ? `${r.user.fullName}` : <span className="text-slate-400">—</span>}</td>

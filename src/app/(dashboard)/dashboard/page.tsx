@@ -41,8 +41,8 @@ export default async function DashboardHome() {
   const overdueCount = overdueCountRows[0]?.c ?? 0;
   const todayAmount = todayRepaymentsRows[0]?.s ?? 0;
 
-  const disbursementByDay = bucketByDay(disbursedLoans30d.filter((l) => l.disbursedAt).map((l) => ({ at: l.disbursedAt!, amount: l.principalZMW })), since30, 30);
-  const collectionsByDay = bucketByDay(repayments30d.map((r) => ({ at: r.receivedAt, amount: r.totalPaidZMW })), since30, 30);
+  const disbursementByDay = bucketByDay(disbursedLoans30d.filter((l: any) => l.disbursedAt).map((l: any) => ({ at: l.disbursedAt!, amount: l.principalZMW })), since30, 30);
+  const collectionsByDay = bucketByDay(repayments30d.map((r: any) => ({ at: r.receivedAt, amount: r.totalPaidZMW })), since30, 30);
 
   const overdueLoansRaw = await db
     .select({
@@ -59,7 +59,7 @@ export default async function DashboardHome() {
     .where(and(gt(loans.daysInArrears, 0), inArray(loans.status, ['ACTIVE', 'IN_ARREARS', 'RESTRUCTURED'])))
     .orderBy(desc(loans.daysInArrears))
     .limit(5);
-  const overdueLoans = overdueLoansRaw.map((l) => ({
+  const overdueLoans = overdueLoansRaw.map((l: any) => ({
     id: l.id,
     loanNo: l.loanNo,
     daysInArrears: l.daysInArrears,
@@ -153,7 +153,7 @@ export default async function DashboardHome() {
             <p className="text-slate-500 text-sm py-4 text-center">No loans currently overdue.</p>
           ) : (
             <ul className="divide-y divide-slate-100">
-              {overdueLoans.map((l) => (
+              {overdueLoans.map((l: any) => (
                 <li key={l.id} className="py-3 flex items-center justify-between">
                   <div>
                     <Link href={`/loans/${l.id}`} className="font-medium text-brand-700 hover:underline">
@@ -180,7 +180,7 @@ export default async function DashboardHome() {
             <p className="text-slate-500 text-sm py-4 text-center">No open AML alerts. Compliance is clean.</p>
           ) : (
             <ul className="divide-y divide-slate-100">
-              {recentAlerts.map((a) => (
+              {recentAlerts.map((a: any) => (
                 <li key={a.id} className="py-3">
                   <div className="flex items-center justify-between">
                     <span className={`badge ${a.severity === 'CRITICAL' ? 'badge-red' : a.severity === 'HIGH' ? 'badge-amber' : a.severity === 'MEDIUM' ? 'badge-blue' : 'badge-gray'}`}>

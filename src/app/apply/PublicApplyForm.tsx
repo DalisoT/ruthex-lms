@@ -10,7 +10,7 @@ interface Product {
   description: string | null;
 }
 
-export default function PublicApplyForm({ products }: { products: Product[] }) {
+export default function PublicApplyForm({ products }: { products: Product[] | any[] }) {
   const [step, setStep] = useState<'form' | 'kyc' | 'submitted'>('form');
   const [borrowerId, setBorrowerId] = useState<string | null>(null);
   const [submissionMessage, setSubmissionMessage] = useState<string>('');
@@ -107,7 +107,7 @@ function FormStep({ products, onSubmit }: { products: Product[]; onSubmit: (borr
               <div>
                 <label className="label">Product</label>
                 <select className="input" value={form.productId} onChange={(e) => update('productId', e.target.value)} required>
-                  {products.map((p) => (
+                  {products.map((p: any) => (
                     <option key={p.id} value={p.id}>
                       {p.name} · {p.interestRateAnnualPct}% · {p.repaymentFrequency}
                     </option>

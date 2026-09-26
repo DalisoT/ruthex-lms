@@ -28,7 +28,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
     { href: '/audit-log', label: 'Audit log', icon: '☰', visible: ['ADMIN', 'COMPLIANCE_OFFICER', 'AUDITOR'].includes(role) },
     { href: '/admin/users', label: 'Admin', icon: '⚙', visible: role === 'ADMIN' },
     { href: '/settings', label: 'Settings', icon: '⚙' },
-  ].filter((n) => n.visible !== false);
+  ].filter((n: any) => n.visible !== false);
 
   return (
     <div className="min-h-screen flex flex-col md:flex-row bg-canvas">
@@ -44,7 +44,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
           </Link>
         </div>
         <nav className="flex-1 p-3 space-y-1">
-          {nav.map((item) => (
+          {nav.map((item: any) => (
             <Link key={item.href} href={item.href} className="flex items-center gap-3 px-3 py-2 rounded hover:bg-white/10 text-white/90 hover:text-white text-sm transition">
               <span className="w-4 text-center" style={{ color: 'var(--gold)' }}>{item.icon}</span>
               <span>{item.label}</span>
@@ -74,7 +74,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
       {/* Mobile bottom nav */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-rule flex justify-around py-2 z-10">
-        {nav.slice(0, 5).map((item) => (
+        {nav.slice(0, 5).map((item: any) => (
           <Link key={item.href} href={item.href} className="text-xs text-ink text-center px-2">
             <div className="text-lg" style={{ color: 'var(--ruthex-green)' }}>{item.icon}</div>
             {item.label}

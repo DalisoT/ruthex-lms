@@ -1,5 +1,5 @@
 import { sql, eq, desc, asc, and, or, inArray, ne, gte, lte, gt, lt, isNull, like, ilike } from 'drizzle-orm';
-import { db } from '@/lib/db';
+import { db, prisma } from '@/lib/db';
 import { borrowers, loans, repayments, amlAlerts, auditLogs, users, branches, loanApplications, loanProducts, notifications } from '@/lib/db/schema';
 
 import Link from 'next/link';
@@ -96,7 +96,7 @@ export default async function LoansListPage({ searchParams }: { searchParams: Se
           <tbody>
             {loans.length === 0 ? (
               <tr><td colSpan={8} className="text-center py-8 text-slate-500">No loans match the filter.</td></tr>
-            ) : loans.map((l) => (
+            ) : loans.map((l: any) => (
               <tr key={l.id}>
                 <td className="font-mono text-xs">{l.loanNo}</td>
                 <td>

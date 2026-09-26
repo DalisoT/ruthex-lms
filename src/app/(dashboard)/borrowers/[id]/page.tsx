@@ -1,5 +1,5 @@
 import { sql, eq, desc, asc, and, or, inArray, ne, gte, lte, gt, lt, isNull, like, ilike } from 'drizzle-orm';
-import { db } from '@/lib/db';
+import { db, prisma } from '@/lib/db';
 import { borrowers, loans, repayments, amlAlerts, auditLogs, users, branches, loanApplications, loanProducts, notifications } from '@/lib/db/schema';
 
 import { notFound } from 'next/navigation';
@@ -23,7 +23,7 @@ export default async function BorrowerDetailPage({ params }: { params: { id: str
   });
   if (!borrower) notFound();
 
-  const totalOutstanding = borrower.loans.reduce((s, l) => s + l.totalOutstandingZMW, 0);
+  const totalOutstanding = borrower.loans.reduce((s: any, l: any) => s + l.totalOutstandingZMW, 0);
 
   return (
     <div className="space-y-6">
@@ -90,7 +90,7 @@ export default async function BorrowerDetailPage({ params }: { params: { id: str
               </tr>
             </thead>
             <tbody>
-              {borrower.loans.map((l) => (
+              {borrower.loans.map((l: any) => (
                 <tr key={l.id}>
                   <td className="font-mono text-xs"><Link href={`/loans/${l.id}`} className="text-brand-700 hover:underline">{l.loanNo}</Link></td>
                   <td><StatusBadge status={l.status} /></td>
@@ -122,7 +122,7 @@ export default async function BorrowerDetailPage({ params }: { params: { id: str
               </tr>
             </thead>
             <tbody>
-              {borrower.documents.map((d) => (
+              {borrower.documents.map((d: any) => (
                 <tr key={d.id}>
                   <td className="font-medium">{d.type}</td>
                   <td className="text-xs font-mono">{d.fileName}</td>

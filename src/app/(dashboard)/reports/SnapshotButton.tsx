@@ -10,7 +10,7 @@ interface ReportPayload {
 
 export default function SnapshotButton({
   reports, periodStart, periodEnd,
-}: { reports: ReportPayload[]; periodStart: string; periodEnd: string }) {
+}: { reports: ReportPayload[] | any[]; periodStart: string; periodEnd: string }) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

@@ -1,5 +1,5 @@
 import { sql, eq, desc, asc, and, or, inArray, ne, gte, lte, gt, lt, isNull, like, ilike } from 'drizzle-orm';
-import { db } from '@/lib/db';
+import { db, prisma } from '@/lib/db';
 import { borrowers, loans, repayments, amlAlerts, auditLogs, users, branches, loanApplications, loanProducts, notifications } from '@/lib/db/schema';
 
 import { notFound } from 'next/navigation';
@@ -23,8 +23,8 @@ export default async function LoanDetailPage({ params }: { params: { id: string 
   });
   if (!loan) notFound();
 
-  const paidInstallments = loan.schedule.filter((s) => s.status === 'PAID').length;
-  const totalPaid = loan.repayments.reduce((s, r) => s + r.totalPaidZMW, 0);
+  const paidInstallments = loan.schedule.filter((s: any) => s.status === 'PAID').length;
+  const totalPaid = loan.repayments.reduce((s: any, r: any) => s + r.totalPaidZMW, 0);
 
   return (
     <div className="space-y-6">
@@ -80,7 +80,7 @@ export default async function LoanDetailPage({ params }: { params: { id: string 
                 </tr>
               </thead>
               <tbody>
-                {loan.schedule.map((s) => (
+                {loan.schedule.map((s: any) => (
                   <tr key={s.id}>
                     <td>{s.installmentNo}</td>
                     <td className="text-xs">{formatDate(s.dueDate)}</td>
@@ -115,7 +115,7 @@ export default async function LoanDetailPage({ params }: { params: { id: string 
                   </tr>
                 </thead>
                 <tbody>
-                  {loan.repayments.map((r) => (
+                  {loan.repayments.map((r: any) => (
                     <tr key={r.id}>
                       <td className="font-mono text-xs">{r.receiptNo}</td>
                       <td className="text-xs">{formatDate(r.receivedAt)}</td>

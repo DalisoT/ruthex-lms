@@ -37,7 +37,7 @@ export default function ProductForm({
 }: {
   mode: 'create' | 'edit';
   productId?: string;
-  initial?: ProductInitial;
+  initial?: ProductInitial | any;
 }) {
   const router = useRouter();
   const [form, setForm] = useState<ProductInitial>(initial ?? empty);

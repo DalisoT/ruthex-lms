@@ -1,5 +1,5 @@
 import { sql, eq, desc, asc, and, or, inArray, ne, gte, lte, gt, lt, isNull, like, ilike } from 'drizzle-orm';
-import { db } from '@/lib/db';
+import { db, prisma } from '@/lib/db';
 import { borrowers, loans, repayments, amlAlerts, auditLogs, users, branches, loanApplications, loanProducts, notifications } from '@/lib/db/schema';
 
 import { notFound } from 'next/navigation';
@@ -113,7 +113,7 @@ export default async function ApplicationDetailPage({ params }: { params: { id: 
           <table className="table-base responsive-table">
             <thead><tr><th>When</th><th>Level</th><th>Approver</th><th>Decision</th><th>Note</th></tr></thead>
             <tbody>
-              {application.approvals.map((a) => (
+              {application.approvals.map((a: any) => (
                 <tr key={a.id}>
                   <td className="text-xs">{formatDateTime(a.decidedAt)}</td>
                   <td className="text-xs">{a.level.replace(/_/g, ' ')}</td>

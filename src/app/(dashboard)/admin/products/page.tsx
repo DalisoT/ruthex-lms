@@ -1,5 +1,5 @@
 import { sql, eq, desc, asc, and, or, inArray, ne, gte, lte, gt, lt, isNull, like, ilike } from 'drizzle-orm';
-import { db } from '@/lib/db';
+import { db, prisma } from '@/lib/db';
 import { borrowers, loans, repayments, amlAlerts, auditLogs, users, branches, loanApplications, loanProducts, notifications } from '@/lib/db/schema';
 
 import Link from 'next/link';
@@ -38,7 +38,7 @@ export default async function ProductsPage() {
           <tbody>
             {products.length === 0 ? (
               <tr><td colSpan={9} className="text-center py-8 text-slate-500">No products defined yet.</td></tr>
-            ) : products.map((p) => (
+            ) : products.map((p: any) => (
               <tr key={p.id}>
                 <td>
                   <div className="font-medium">{p.name}</div>

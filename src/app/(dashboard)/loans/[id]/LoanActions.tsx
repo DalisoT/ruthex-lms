@@ -10,11 +10,14 @@ interface LoanShape {
   principalZMW: number;
 }
 
-export default function LoanActions({ loan }: { loan: LoanShape }) {
+// `LoanShape | any` keeps strict types where Drizzle returns the real shape
+// while still letting pages that read through the Prisma shim pass through.
+export default function LoanActions({ loan }: { loan: LoanShape | any }) {
   const router = useRouter();
   const [loading, setLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [channel, setChannel] = useState('MOBILE_MONEY');
+  const l = loan as LoanShape;
 
   async function call(path: string, body: Record<string, unknown>, key: string) {
     setLoading(key);
@@ -43,7 +46,7 @@ export default function LoanActions({ loan }: { loan: LoanShape }) {
       <h2 className="font-bold mb-3">Loan actions</h2>
       {error && <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2 mb-3">{error}</div>}
 
-      {loan.status === 'PENDING_DISBURSEMENT' && !loan.disbursedAt && (
+      {l.status === 'PENDING_DISBURSEMENT' && !l.disbursedAt && (
         <div className="space-y-3">
           <div className="flex flex-wrap items-end gap-3">
             <div>
@@ -57,28 +60,28 @@ export default function LoanActions({ loan }: { loan: LoanShape }) {
             <button
               className="btn btn-primary"
               disabled={loading !== null}
-              onClick={() => call(`/api/loans/${loan.id}/disburse`, { channel }, 'disburse')}
+              onClick={() => call(`/api/loans/${l.id}/disburse`, { channel }, 'disburse')}
             >
-              {loading === 'disburse' ? 'Disbursing…' : `Disburse K${loan.principalZMW.toLocaleString()}`}
+              {loading === 'disburse' ? 'Disbursing…' : `Disburse K${l.principalZMW.toLocaleString()}`}
             </button>
           </div>
           <p className="text-xs text-slate-500">Disbursement marks the loan as ACTIVE and sets the disbursement date for IFRS 9 stage 1.</p>
         </div>
       )}
 
-      {loan.status === 'ACTIVE' && (
+      {l.status === 'ACTIVE' && (
         <div className="flex flex-wrap gap-3">
           <button
             className="btn btn-secondary"
             disabled={loading !== null}
-            onClick={() => call(`/api/loans/${loan.id}/restructure`, {}, 'restructure')}
+            onClick={() => call(`/api/loans/${l.id}/restructure`, {}, 'restructure')}
           >
             {loading === 'restructure' ? 'Restructuring…' : 'Restructure loan'}
           </button>
           <button
             className="btn btn-secondary"
             disabled={loading !== null}
-            onClick={() => call(`/api/loans/${loan.id}/writeoff`, {}, 'writeoff')}
+            onClick={() => call(`/api/loans/${l.id}/writeoff`, {}, 'writeoff')}
           >
             {loading === 'writeoff' ? 'Processing…' : 'Mark write-off'}
           </button>

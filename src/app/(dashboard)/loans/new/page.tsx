@@ -1,5 +1,5 @@
 import { sql, eq, desc, asc, and, or, inArray, ne, gte, lte, gt, lt, isNull, like, ilike } from 'drizzle-orm';
-import { db } from '@/lib/db';
+import { db, prisma } from '@/lib/db';
 import { borrowers, loans, repayments, amlAlerts, auditLogs, users, branches, loanApplications, loanProducts, notifications } from '@/lib/db/schema';
 
 import { redirect } from 'next/navigation';
@@ -28,7 +28,7 @@ export default async function NewLoanPage({ searchParams }: { searchParams: { bo
         <p className="text-sm text-slate-500">Capture the request. The system scores it and routes it through approval.</p>
       </div>
       <LoanApplicationForm
-        products={products.map((p) => ({
+        products={products.map((p: any) => ({
           id: p.id, name: p.name, minAmountZMW: p.minAmountZMW, maxAmountZMW: p.maxAmountZMW,
           minTermMonths: p.minTermMonths, maxTermMonths: p.maxTermMonths,
           interestRateAnnualPct: p.interestRateAnnualPct, interestMethod: p.interestMethod,

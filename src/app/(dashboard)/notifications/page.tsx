@@ -1,5 +1,5 @@
 import { sql, eq, desc, asc, and, or, inArray, ne, gte, lte, gt, lt, isNull, like, ilike } from 'drizzle-orm';
-import { db } from '@/lib/db';
+import { db, prisma } from '@/lib/db';
 import { borrowers, loans, repayments, amlAlerts, auditLogs, users, branches, loanApplications, loanProducts, notifications } from '@/lib/db/schema';
 
 import { getCurrentSession } from '@/lib/auth';
@@ -33,7 +33,7 @@ export default async function NotificationsInbox() {
       <div className="card divide-y divide-slate-100">
         {items.length === 0 ? (
           <div className="px-6 py-8 text-center text-slate-500">No notifications yet.</div>
-        ) : items.map((n) => (
+        ) : items.map((n: any) => (
           <div key={n.id} className="px-6 py-4 flex items-start gap-4">
             <ChannelBadge channel={n.channel} />
             <div className="flex-1">

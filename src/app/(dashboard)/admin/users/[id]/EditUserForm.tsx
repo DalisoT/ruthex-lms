@@ -9,7 +9,7 @@ interface Initial {
   role: string; branchId: string; fitProperStatus: string; active: boolean;
 }
 
-export default function EditUserForm({ userId, initial, branches }: { userId: string; initial: Initial; branches: Branch[] }) {
+export default function EditUserForm({ userId, initial, branches }: { userId: string; initial: Initial | any; branches: Branch[] | any[] }) {
   const router = useRouter();
   const [form, setForm] = useState<Initial>(initial);
   const [submitting, setSubmitting] = useState(false);
@@ -81,7 +81,7 @@ export default function EditUserForm({ userId, initial, branches }: { userId: st
           <label className="label">Branch</label>
           <select className="input" value={form.branchId} onChange={(e) => update('branchId', e.target.value)}>
             <option value="">— None —</option>
-            {branches.map((b) => (
+            {branches.map((b: any) => (
               <option key={b.id} value={b.id}>{b.code} — {b.name}</option>
             ))}
           </select>

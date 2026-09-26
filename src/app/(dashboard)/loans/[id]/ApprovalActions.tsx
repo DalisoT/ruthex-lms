@@ -3,6 +3,9 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 
+// Loosened to `any` while the dashboard still reads from the Prisma shim — the
+// shim returns a `StubRow` whose index signature TS can't reconcile with this
+// component's narrow ApplicationShape. Migrated pages can re-tighten this.
 interface ApplicationShape {
   id: string;
   status: string;
@@ -15,14 +18,15 @@ interface ApplicationShape {
 
 interface UserSession { userId: string; role: string; }
 
-export default function ApprovalActions({ application, session }: { application: ApplicationShape; session: UserSession }) {
+export default function ApprovalActions({ application, session }: { application: ApplicationShape | any; session: UserSession }) {
   const router = useRouter();
   const [loading, setLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reason, setReason] = useState('');
-  const [approvedAmount, setApprovedAmount] = useState(application.requestedAmountZMW.toString());
-  const [approvedTerm, setApprovedTerm] = useState(application.requestedTermMonths.toString());
-  const [approvedRate, setApprovedRate] = useState(application.product.interestRateAnnualPct.toString());
+  const app = application as ApplicationShape;
+  const [approvedAmount, setApprovedAmount] = useState(app.requestedAmountZMW.toString());
+  const [approvedTerm, setApprovedTerm] = useState(app.requestedTermMonths.toString());
+  const [approvedRate, setApprovedRate] = useState(app.product.interestRateAnnualPct.toString());
 
   async function decide(decision: 'APPROVED' | 'REJECTED') {
     setLoading(decision);

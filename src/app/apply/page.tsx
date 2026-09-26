@@ -14,7 +14,7 @@ export default async function PublicApplyPage() {
     .orderBy(asc(loanProducts.name));
   return (
     <PublicApplyForm
-      products={products.map((p) => ({
+      products={products.map((p: any) => ({
         id: p.id,
         name: p.name,
         minAmountZMW: p.minAmountZMW,

@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 
 interface Branch { id: string; code: string; name: string; }
 
-export default function NewUserForm({ branches }: { branches: Branch[] }) {
+export default function NewUserForm({ branches }: { branches: Branch[] | any[] }) {
   const router = useRouter();
   const [form, setForm] = useState({
     fullName: '',
@@ -91,7 +91,7 @@ export default function NewUserForm({ branches }: { branches: Branch[] }) {
         <div>
           <label className="label">Branch *</label>
           <select className="input" value={form.branchId} onChange={(e) => update('branchId', e.target.value)} required>
-            {branches.map((b) => (
+            {branches.map((b: any) => (
               <option key={b.id} value={b.id}>{b.code} — {b.name}</option>
             ))}
           </select>

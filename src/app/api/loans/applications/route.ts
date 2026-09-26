@@ -114,7 +114,7 @@ export async function POST(req: NextRequest) {
     const installmentAmount = installments[0]?.totalDue ?? approvedAmount;
     const firstDue = installments[0]?.dueDate ?? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
     const maturity = installments[installments.length - 1]?.dueDate ?? new Date(Date.now() + approvedTerm * 30 * 24 * 60 * 60 * 1000);
-    const totalRepayable = installments.reduce((s, i) => s + i.totalDue, 0);
+    const totalRepayable = installments.reduce((s: any, i: any) => s + i.totalDue, 0);
 
     const [loan] = await db.insert(loans).values({
       loanNo,
@@ -139,7 +139,7 @@ export async function POST(req: NextRequest) {
     await db.update(loanApplications).set({ loanId }).where(eq(loanApplications.id, application.id));
 
     if (installments.length > 0) {
-      await db.insert(repaymentSchedule).values(installments.map((inst) => ({
+      await db.insert(repaymentSchedule).values(installments.map((inst: any) => ({
         loanId: loan.id,
         installmentNo: inst.installmentNo,
         dueDate: inst.dueDate,

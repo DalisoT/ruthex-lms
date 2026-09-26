@@ -1,5 +1,5 @@
 import { sql, eq, desc, asc, and, or, inArray, ne, gte, lte, gt, lt, isNull, like, ilike } from 'drizzle-orm';
-import { db } from '@/lib/db';
+import { db, prisma } from '@/lib/db';
 import { borrowers, loans, repayments, amlAlerts, auditLogs, users, branches, loanApplications, loanProducts, notifications } from '@/lib/db/schema';
 
 import Link from 'next/link';
@@ -35,11 +35,11 @@ export default async function AmlAlertsPage({ searchParams }: { searchParams: { 
       </div>
 
       <div className="card p-4 grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
-        <Stat label="Open CTR" value={counts.find((c) => c.alertType === 'CTR' && c.status === 'OPEN')?._count._all ?? 0} />
-        <Stat label="Open STR" value={counts.find((c) => c.alertType === 'STR' && c.status === 'OPEN')?._count._all ?? 0} />
-        <Stat label="Open sanctions" value={counts.find((c) => c.alertType === 'SANCTIONS_HIT' && c.status === 'OPEN')?._count._all ?? 0} />
-        <Stat label="Reported to FIC" value={counts.filter((c) => c.status === 'REPORTED_TO_FIC').reduce((s, c) => s + c._count._all, 0)} />
-        <Stat label="Total ever" value={counts.reduce((s, c) => s + c._count._all, 0)} />
+        <Stat label="Open CTR" value={(counts.find((c: any) => c.alertType === 'CTR' && c.status === 'OPEN') as any)?._count?._all ?? 0} />
+        <Stat label="Open STR" value={(counts.find((c: any) => c.alertType === 'STR' && c.status === 'OPEN') as any)?._count?._all ?? 0} />
+        <Stat label="Open sanctions" value={(counts.find((c: any) => c.alertType === 'SANCTIONS_HIT' && c.status === 'OPEN') as any)?._count?._all ?? 0} />
+        <Stat label="Reported to FIC" value={(counts as any[]).filter((c: any) => c.status === 'REPORTED_TO_FIC').reduce((s: any, c: any) => s + (c._count?._all ?? 0), 0)} />
+        <Stat label="Total ever" value={(counts as any[]).reduce((s: any, c: any) => s + (c._count?._all ?? 0), 0)} />
       </div>
 
       <form className="card p-4 flex flex-wrap items-end gap-3" method="get">
@@ -84,7 +84,7 @@ export default async function AmlAlertsPage({ searchParams }: { searchParams: { 
           <tbody>
             {alerts.length === 0 ? (
               <tr><td colSpan={8} className="text-center py-8 text-slate-500">No alerts match the filter.</td></tr>
-            ) : alerts.map((a) => (
+            ) : alerts.map((a: any) => (
               <tr key={a.id}>
                 <td>
                   <span className={`badge ${a.alertType === 'STR' ? 'badge-red' : a.alertType === 'CTR' ? 'badge-amber' : 'badge-blue'}`}>

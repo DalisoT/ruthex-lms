@@ -1,5 +1,5 @@
 import { sql, eq, desc, asc, and, or, inArray, ne, gte, lte, gt, lt, isNull, like, ilike } from 'drizzle-orm';
-import { db } from '@/lib/db';
+import { db, prisma } from '@/lib/db';
 import { borrowers, loans, repayments, amlAlerts, auditLogs, users, branches, loanApplications, loanProducts, notifications } from '@/lib/db/schema';
 
 import Link from 'next/link';
@@ -61,10 +61,10 @@ export default async function ApplicationsPage({ searchParams }: { searchParams:
       </div>
 
       <div className="card p-4 grid grid-cols-2 md:grid-cols-7 gap-3 text-sm">
-        {['DRAFT', 'SUBMITTED', 'UNDER_REVIEW', 'APPROVED', 'REJECTED', 'WITHDRAWN', 'DISBURSED'].map((s) => (
+        {['DRAFT', 'SUBMITTED', 'UNDER_REVIEW', 'APPROVED', 'REJECTED', 'WITHDRAWN', 'DISBURSED'].map((s: any) => (
           <div key={s}>
             <div className="text-xs text-slate-500">{s.replace(/_/g, ' ')}</div>
-            <div className="text-xl font-bold">{counts.find((c) => c.status === s)?._count._all ?? 0}</div>
+            <div className="text-xl font-bold">{counts.find((c: any) => c.status === s)?._count._all ?? 0}</div>
           </div>
         ))}
       </div>
@@ -108,7 +108,7 @@ export default async function ApplicationsPage({ searchParams }: { searchParams:
           <tbody>
             {applications.length === 0 ? (
               <tr><td colSpan={9} className="text-center py-8 text-slate-500">No applications match the filter.</td></tr>
-            ) : applications.map((a) => (
+            ) : applications.map((a: any) => (
               <tr key={a.id}>
                 <td className="font-mono text-xs">{a.applicationNo}</td>
                 <td>

@@ -1,5 +1,5 @@
 import { sql, eq, desc, asc, and, or, inArray, ne, gte, lte, gt, lt, isNull, like, ilike } from 'drizzle-orm';
-import { db } from '@/lib/db';
+import { db, prisma } from '@/lib/db';
 import { borrowers, loans, repayments, amlAlerts, auditLogs, users, branches, loanApplications, loanProducts, notifications } from '@/lib/db/schema';
 
 import { generateCapitalAdequacyReport, generateLiquidityReport, generateAssetQualityReport, generateLargeExposuresReport, generateRelatedPartyReport, snapshotBozReport, zmw } from '@/lib/boz-reports';
@@ -96,7 +96,7 @@ export default async function ReportsPage() {
             ['Borrowers over 5% of capital', `${lge.largeExposures.length}`],
             ['Breaches', `${lge.breaches.length}`],
           ]}
-          subTable={lge.largeExposures.slice(0, 10).map((e) => [
+          subTable={lge.largeExposures.slice(0, 10).map((e: any) => [
             e.borrowerNo,
             e.borrowerName,
             zmw(e.exposureZMW),
@@ -113,7 +113,7 @@ export default async function ReportsPage() {
             ['Related-party exposures on book', `${rpe.exposures.length}`],
             ['Compliance status', rpe.isCompliant ? 'Within limit' : 'Breach'],
           ]}
-          subTable={rpe.exposures.slice(0, 10).map((e) => [
+          subTable={rpe.exposures.slice(0, 10).map((e: any) => [
             e.name,
             e.relationship,
             zmw(e.exposureZMW),
@@ -134,7 +134,7 @@ export default async function ReportsPage() {
               </tr>
             </thead>
             <tbody>
-              {snapshots.map((s) => (
+              {snapshots.map((s: any) => (
                 <tr key={s.id}>
                   <td className="text-xs font-medium">{s.reportType.replace(/_/g, ' ')}</td>
                   <td className="text-xs">{formatDate(s.periodStart)} – {formatDate(s.periodEnd)}</td>

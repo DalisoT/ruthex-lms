@@ -512,7 +512,7 @@ export const notifications = pgTable(
     userId: uuid('userId'),
     borrowerId: uuid('borrowerId'),
     channel: text('channel').notNull(),
-    recipient: text('recipient').notNull(),
+    recipient: text('recipient'),
     subject: text('subject'),
     body: text('body').notNull(),
     status: text('status').notNull().default('PENDING'),

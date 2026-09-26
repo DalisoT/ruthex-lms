@@ -12,6 +12,7 @@
 import { drizzle } from 'drizzle-orm/neon-http';
 import { neon } from '@neondatabase/serverless';
 import * as schema from './schema';
+export { prisma } from '../prisma-shim';
 
 declare global {
   // eslint-disable-next-line no-var
