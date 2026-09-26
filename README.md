@@ -197,16 +197,13 @@ The disbursement flow uses the same adapter, so a single switch enables inbound 
 
 `POST /api/ussd` is wired to the Zambia-standard USSD protocol (CON / END response). In production, point Africa's Talking (or equivalent) at this endpoint. The session interpreter is in `src/lib/notifications.ts` (`processUssd`) and is intentionally minimal — extend it to match the menu depth your operations need.
 
-## Switching to Postgres / Supabase
+## Database
 
-When you're ready to move off SQLite (e.g. to Supabase Postgres):
+RUTHEX LMS targets **Postgres** in production (Neon recommended for Cloudflare Pages). The Prisma schema is portable — no SQLite-specific constructs are used. For local dev, point `DATABASE_URL` at any Postgres instance (Neon dev branch, Docker, or local Postgres).
 
-1. Change `provider = "sqlite"` to `provider = "postgresql"` in `prisma/schema.prisma`.
-2. Set `DATABASE_URL=postgresql://...` in `.env`.
-3. Run `npm run db:migrate -- --name init` instead of `db:push`.
-4. Re-run `npm run db:seed`.
+If you ever want to migrate away from Postgres (e.g. for embedded testing), set `provider = "sqlite"` in `prisma/schema.prisma` and update `DATABASE_URL` to `file:./prisma/dev.db`. The schema will continue to work.
 
-The Prisma schema is portable — no SQLite-specific constructs are used. If you want Supabase Auth instead of the JWT layer, swap `src/lib/auth.ts` for `@supabase/supabase-ssr` and rewire the cookies. If you want Supabase Storage for the document vault, swap the `KycDocument.storagePath` writes for `supabase.storage.from('ruthex').upload(...)`.
+For KYC document storage in production, replace the local `KycDocument.storagePath` writes with R2 / S3 / Supabase Storage uploads.
 
 ## Innovative features — how they fit together
 
@@ -220,25 +217,62 @@ The Prisma schema is portable — no SQLite-specific constructs are used. If you
 8. **BOZ reports** are generated monthly. The snapshot persists figures for audit. Audit-chain integrity is verified in Settings.
 9. **Borrower statement** is one click from any borrower profile — browser-native print saves a clean PDF.
 
-## Production deployment
+## Production deployment — Cloudflare Pages + Neon Postgres
 
-The app supports standalone Next.js builds:
+The app is built for **Cloudflare Pages** via OpenNext and runs against **Neon Postgres** (or any Postgres).
 
-```bash
-BUILD_STANDALONE=1 npm run build
-```
+### One-time setup
 
-Output goes to `.next/standalone/`. Set `BUILD_STANDALONE=1` for minimal Docker images. The app expects only a database — no other runtime services.
+1. **Sign up for Neon** (https://neon.tech, free tier) and create a project called `ruthex-lms`. Copy the connection string — looks like `postgresql://neondb_owner:xxx@ep-xxx.region.aws.neon.tech/neondb?sslmode=require`.
 
-Recommended production hardening before real customer traffic:
-1. Real mobile money adapters for MTN / Airtel / Zamtel
-2. Real document storage (S3 / local + signed URLs)
+2. **Connect this repo to Cloudflare Pages**:
+   - Open https://dash.cloudflare.com → Pages → Create → Connect to Git
+   - Select the `DalisoT/ruthex-lms` repo
+   - Project name: `ruthex-lms` (default URL becomes `ruthex-lms.pages.dev`)
+   - Build command: `npx opennextjs-cloudflare build --dangerouslyUseUnsupportedNextVersion`
+   - Build output directory: leave blank (OpenNext reads `wrangler.jsonc`)
+   - Compatibility flags: `nodejs_compat`
+
+3. **Set secrets via `wrangler`** (browser auth required first):
+   ```powershell
+   npx wrangler login
+   npx wrangler secret put DATABASE_URL          # paste Neon connection string
+   npx wrangler secret put JWT_SECRET            # 32+ random bytes, e.g. (New-Guid).Guid
+   ```
+
+4. **Set non-secret env vars** in the Cloudflare dashboard (Settings → Environment variables):
+   - `NEXT_PUBLIC_SITE_URL` → `https://ruthex-lms.pages.dev`
+   - `NEXT_PUBLIC_APP_NAME` → `RUTHEX Lending Institution`
+   - `NEXT_PUBLIC_APP_TAGLINE` → `Microfinance, done right.`
+   - `MOBILE_MONEY_PROVIDER` → `mock` (swap for `mtn`/`airtel`/`zamtel` once real adapters land)
+   - `MOBILE_MONEY_WEBHOOK_SECRET` → any random string
+   - `CTR_THRESHOLD_USD` → `10000`
+   - `BOZ_REPORT_FROM_EMAIL` → `reports@ruthex.local`
+
+5. **Push to trigger the first build** — `git push origin main`. Cloudflare builds automatically. Watch the deploy log from the dashboard.
+
+6. **Seed the database** (first time only): from your local machine, point `DATABASE_URL` at the Neon connection string, then:
+   ```powershell
+   npm.cmd install
+   npm.cmd run db:push
+   npm.cmd run db:seed
+   ```
+
+### Adding a custom domain later
+
+Pages → `ruthex-lms` → Custom domains → Set up a custom domain. If the zone is on Cloudflare, it's a 30-second click. If not, change your registrar's nameservers to Cloudflare's first.
+
+### Local build smoke test (Windows caveat)
+
+OpenNext warns "not fully compatible with Windows — use WSL" and a local `npm run cf:build` may hang during Next.js optimization. Don't chase it — push to GitHub and let Cloudflare's Linux build environment handle it.
+
+### Recommended production hardening before real customer traffic
+1. Real mobile money adapters for MTN / Airtel / Zamtel (swap `src/lib/mobile-money.ts`)
+2. Real document storage (Cloudflare R2 / S3) with signed URLs
 3. Real sanctions list integration (UN consolidated + local)
 4. Multi-tenant branch scoping on top of `branchId`
-5. TLS termination + reverse proxy (Caddy / Nginx)
-6. Database backups + WAL archiving (Postgres)
-7. Centralized logging (structured logs to a sink)
-8. Uptime monitoring pointing at `/api/health`
+5. Database backups + point-in-time recovery (Neon does this automatically on paid plans; on free, take periodic pg_dump snapshots)
+6. Uptime monitoring pointing at `/api/health`
 
 ## Tests / CI
 
@@ -270,8 +304,7 @@ Tests are not included in the MVP. Recommended first set when scaling:
 ## What it doesn't yet handle (deliberate, for the paid-services phase)
 
 - Real MTN/Airtel/Zamtel adapter implementations (mock is in place; swap implementations in `src/lib/mobile-money.ts`)
-- Supabase Postgres migration (one-line Prisma provider swap + new `DATABASE_URL`)
-- Real document upload (KycDocument.storagePath is recorded; storage backend is the swap point)
+- Real document upload (KycDocument.storagePath is recorded; storage backend — Cloudflare R2 / S3 — is the swap point)
 - Email/SMS/WhatsApp outbound integration (notifications queue is in place; wire Africa's Talking / Twilio / Meta Business API in `src/lib/notifications.ts`)
 - 2FA for high-privilege roles
 - Automated test suite

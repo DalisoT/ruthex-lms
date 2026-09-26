@@ -3,17 +3,20 @@
 // Engineered to satisfy the Bank of Zambia NDT MFI requirements documented in
 // the research deliverable (see docs/regulatory-mapping.md in this repo).
 // Notes on choices:
-//   - SQLite for frictionless local dev (the same schema runs on Postgres in
-//     production — only the datasource URL changes).
-//   - SQLite does not support enums; we use string fields with validation in
-//     src/lib/types.ts and application-level guards.
+//   - Postgres dialect (Neon in production, local Postgres for dev). Schema
+//     uses portable types (String/Int/Float/Boolean/DateTime) so it would
+//     also run on SQLite or MySQL if a future project needs that — but the
+//     production target for RUTHEX is Postgres on Cloudflare.
+//   - Postgres has proper enums but we keep string fields with validation in
+//     src/lib/types.ts and application-level guards so the schema stays
+//     portable and seed data is human-readable.
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 

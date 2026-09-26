@@ -1,0 +1,26 @@
+{
+  // Cloudflare Workers config for the RUTHEX LMS OpenNext build.
+  //
+  // Notes:
+  //   - `name` is what becomes the *.pages.dev URL (ruthex-lms.pages.dev).
+  //   - `main` points at the OpenNext-built worker bundle.
+  //   - `assets.directory` is the static assets bucket OpenNext emits.
+  //   - `nodejs_compat` is required because Prisma + bcryptjs need Node APIs.
+  //   - `placement.smart` lets Cloudflare pick the lowest-latency region.
+  //   - `observability.enabled` flips on Workers Logs + Analytics Engine for free.
+  $schema: "node_modules/wrangler/config-schema.json",
+  name: "ruthex-lms",
+  main: ".open-next/worker.js",
+  compatibility_date: "2026-09-20",
+  compatibility_flags: ["nodejs_compat"],
+  assets: {
+    directory: ".open-next/assets",
+    binding: "ASSETS",
+  },
+  observability: {
+    enabled: true,
+  },
+  placement: {
+    mode: "smart",
+  },
+}
