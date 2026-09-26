@@ -105,6 +105,67 @@
   .logo-on-dark {
     filter: brightness(0) invert(1);
   }
+
+  /* -----------------------------------------------------------------------
+     Logo badge — gives the transparent PNG a defined panel so the mark
+     reads against any background. The base `.logo-panel` class shapes the
+     square + radius + shadow; the modifier classes pick the colour.
+     ----------------------------------------------------------------------- */
+  .logo-panel {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 14%;
+    box-shadow:
+      0 1px 2px rgba(15, 23, 42, 0.06),
+      0 4px 14px rgba(15, 23, 42, 0.08);
+    transition: transform 150ms ease, box-shadow 150ms ease;
+  }
+  .logo-panel:hover {
+    transform: translateY(-1px);
+    box-shadow:
+      0 1px 2px rgba(15, 23, 42, 0.08),
+      0 8px 20px rgba(15, 23, 42, 0.12);
+  }
+
+  /* Light surfaces (login / apply / etc.) — warm-cream panel with a 1px
+     RUTHEX-Green border. The green R reads strongly against this. */
+  .logo-panel--default {
+    background: linear-gradient(135deg, #FBFBF7 0%, #F1F0EA 100%);
+    border: 1.5px solid var(--ruthex-green);
+  }
+
+  /* Dark RUTHEX Green sidebar — keep a white panel so the green mark stays
+     legible; faint gold accent border for brand presence. */
+  .logo-panel--on-dark {
+    background: #FFFFFF;
+    border: 1.5px solid var(--gold, #D4AF37);
+  }
+
+  /* Solid green badge — for hero sections where the white mark works best. */
+  .logo-panel--green {
+    background: var(--ruthex-green);
+    border: 1.5px solid var(--ruthex-green);
+  }
+  .logo-panel--green img {
+    filter: brightness(0) invert(1);
+  }
+
+  /* Solid gold accent — for the public apply page footer etc. */
+  .logo-panel--gold {
+    background: linear-gradient(135deg, var(--gold, #D4AF37) 0%, #B8902A 100%);
+    border: 1.5px solid #B8902A;
+  }
+  .logo-panel--gold img {
+    filter: brightness(0) invert(1);
+  }
+
+  /* No-fill outline — for inline wordmark contexts. */
+  .logo-panel--outline {
+    background: transparent;
+    border: 1.5px dashed rgba(11, 93, 59, 0.35);
+    box-shadow: none;
+  }
 }
 
 /* PWA responsive niceties */

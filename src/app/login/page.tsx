@@ -17,11 +17,11 @@ export default async function LoginPage() {
         style={{ background: 'var(--ruthex-green)' }}
       >
         <div>
-          <div className="flex items-center gap-3">
-            <Logo size={48} onDark />
+          <div className="flex items-center gap-4">
+            <Logo size={64} variant="green" />
             <div>
               <div className="font-bold text-xl tracking-tight">RUTHEX</div>
-              <div className="text-[11px] uppercase tracking-[0.25em] text-emerald-500">Lending Institution</div>
+              <div className="text-[11px] uppercase tracking-[0.25em] text-emerald-300">Lending Institution</div>
             </div>
           </div>
         </div>
@@ -51,7 +51,7 @@ export default async function LoginPage() {
         <div className="w-full max-w-md">
           {/* Mobile-only brand mark */}
           <div className="md:hidden flex items-center justify-center gap-3 mb-6">
-            <Logo size={48} />
+            <Logo size={56} />
             <div>
               <div className="font-bold text-xl">RUTHEX</div>
               <div className="text-[11px] uppercase tracking-[0.25em] text-emerald-600">Lending Institution</div>

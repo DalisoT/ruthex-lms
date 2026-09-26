@@ -82,8 +82,8 @@ function FormStep({ products, onSubmit }: { products: Product[]; onSubmit: (borr
     <div className="min-h-screen bg-gradient-to-br from-brand-50 to-brand-100 p-4 py-12">
       <div className="max-w-2xl mx-auto">
         <div className="text-center mb-8">
-          <div className="inline-block mb-4 shadow-soft">
-            <Logo size={72} />
+          <div className="inline-block mb-5">
+            <Logo size={104} />
           </div>
           <h1 className="text-3xl font-bold text-brand-700">RUTHEX Lending Institution</h1>
           <p className="text-emerald-600">Apply for a loan in minutes.</p>

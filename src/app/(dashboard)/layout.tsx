@@ -35,11 +35,11 @@ export default async function DashboardLayout({ children }: { children: React.Re
       {/* Sidebar — desktop, deep RUTHEX Green */}
       <aside className="hidden md:flex md:w-64 md:flex-col text-white" style={{ background: 'var(--ruthex-green)' }}>
         <div className="p-6 border-b border-white/10">
-          <Link href="/dashboard" className="flex items-center gap-3">
-            <Logo size={44} onDark />
+          <Link href="/dashboard" className="flex items-center gap-4">
+            <Logo size={52} variant="green" />
             <div>
               <div className="font-bold leading-tight tracking-tight text-base">RUTHEX</div>
-              <div className="text-[10px] uppercase tracking-[0.2em] text-emerald-500">Lending Institution</div>
+              <div className="text-[10px] uppercase tracking-[0.2em] text-emerald-300">Lending Institution</div>
             </div>
           </Link>
         </div>
@@ -65,8 +65,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
       {/* Mobile header */}
       <header className="md:hidden text-white p-4 flex items-center justify-between" style={{ background: 'var(--ruthex-green)' }}>
-        <div className="flex items-center gap-2">
-          <Logo size={32} onDark />
+        <div className="flex items-center gap-3">
+          <Logo size={40} variant="green" />
           <div className="font-bold">RUTHEX</div>
         </div>
         <LogoutButton />
