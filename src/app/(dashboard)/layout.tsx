@@ -4,6 +4,12 @@ import { getCurrentSession } from '@/lib/auth';
 import LogoutButton from './LogoutButton';
 import { Logo } from '@/components/Logo';
 
+// Every page under (dashboard) reads from the DB and depends on the current
+// session. Pre-rendering them at build time fails because DATABASE_URL is a
+// runtime secret, not a build-time env var. Force all dashboard pages to
+// server-render on demand.
+export const dynamic = 'force-dynamic';
+
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const session = await getCurrentSession();
   if (!session) {
