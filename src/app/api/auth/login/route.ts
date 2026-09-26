@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { readJsonBody } from '@/lib/request-body';
 import { z } from 'zod';
 import { login, setSessionCookie } from '@/lib/auth';
 import { audit } from '@/lib/audit';
@@ -15,9 +16,8 @@ export async function POST(req: NextRequest) {
   const limitKey = rateLimitKeyFromRequest(req, 'login');
   const rl = consume(limitKey, { rpm: 10, burst: 10 });
   if (!rl.allowed) return rateLimitResponse(rl);
-
-  let body: unknown;
-  try { body = await req.json(); } catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }); }
+  const body = await readJsonBody(req);
+  if (body === null) return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   const parsed = schema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: 'Email and password required' }, { status: 400 });

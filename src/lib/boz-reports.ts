@@ -13,7 +13,9 @@
  * In production, the snapshot can be submitted to BOZ through the supervisory
  * portal (file format governed by BOZ directives).
  */
-import { prisma } from './db';
+import { inArray, eq, and } from 'drizzle-orm';
+import { db } from './db';
+import { loans, users, borrowers, bozReports } from './db/schema';
 import crypto from 'crypto';
 import { MFI_MIN_CAR_PCT } from './types';
 
@@ -62,11 +64,11 @@ export interface CapitalAdequacyReport {
 }
 
 export async function generateCapitalAdequacyReport(periodStart: Date, periodEnd: Date): Promise<CapitalAdequacyReport> {
-  const loans = await prisma.loan.findMany({
-    where: { status: { in: ['ACTIVE', 'IN_ARREARS', 'RESTRUCTURED', 'DEFAULTED'] } },
-    select: { principalOutstandingZMW: true, ifrs9Stage: true },
-  });
-  const totalLoans = loans.reduce((s, l) => s + l.principalOutstandingZMW, 0);
+  const loanRows = await db
+    .select({ principalOutstandingZMW: loans.principalOutstandingZMW, ifrs9Stage: loans.ifrs9Stage })
+    .from(loans)
+    .where(inArray(loans.status, ['ACTIVE', 'IN_ARREARS', 'RESTRUCTURED', 'DEFAULTED']));
+  const totalLoans = loanRows.reduce((s, l) => s + l.principalOutstandingZMW, 0);
   // Simplified RWA weighting
   const rwaLoans = totalLoans * 1.0;     // 100% risk weight for borrower loans
   const rwaCash = 0;                    // 0% risk weight for cash
@@ -83,9 +85,9 @@ export async function generateCapitalAdequacyReport(periodStart: Date, periodEnd
   const carPct = totalRWA > 0 ? (totalRegulatoryCapital / totalRWA) * 100 : 0;
 
   const stageBreakdown = {
-    stage1: loans.filter((l) => l.ifrs9Stage === 1).length,
-    stage2: loans.filter((l) => l.ifrs9Stage === 2).length,
-    stage3: loans.filter((l) => l.ifrs9Stage === 3).length,
+    stage1: loanRows.filter((l) => l.ifrs9Stage === 1).length,
+    stage2: loanRows.filter((l) => l.ifrs9Stage === 2).length,
+    stage3: loanRows.filter((l) => l.ifrs9Stage === 3).length,
   };
 
   return {
@@ -123,11 +125,11 @@ export interface LiquidityReport {
 }
 
 export async function generateLiquidityReport(periodStart: Date, periodEnd: Date): Promise<LiquidityReport> {
-  const loans = await prisma.loan.findMany({
-    where: { status: { in: ['ACTIVE', 'IN_ARREARS', 'RESTRUCTURED'] } },
-    select: { totalOutstandingZMW: true },
-  });
-  const liabilities = loans.reduce((s, l) => s + l.totalOutstandingZMW, 0);
+  const loanRows = await db
+    .select({ totalOutstandingZMW: loans.totalOutstandingZMW })
+    .from(loans)
+    .where(inArray(loans.status, ['ACTIVE', 'IN_ARREARS', 'RESTRUCTURED']));
+  const liabilities = loanRows.reduce((s, l) => s + l.totalOutstandingZMW, 0);
   // Liquidity: cash + bank balance — simplified, placeholders for production
   const liquidAssets = 250_000;
   const ratio = liabilities > 0 ? (liquidAssets / liabilities) * 100 : 100;
@@ -164,21 +166,26 @@ export interface AssetQualityReport {
 }
 
 export async function generateAssetQualityReport(periodStart: Date, periodEnd: Date): Promise<AssetQualityReport> {
-  const loans = await prisma.loan.findMany({
-    where: { status: { in: ['ACTIVE', 'IN_ARREARS', 'RESTRUCTURED', 'DEFAULTED'] } },
-    select: { principalOutstandingZMW: true, ifrs9Stage: true, daysInArrears: true, eclProvisionZMW: true },
-  });
-  const totalOutstanding = loans.reduce((s, l) => s + l.principalOutstandingZMW, 0);
-  const stage1 = loans.filter((l) => l.ifrs9Stage === 1).reduce((s, l) => s + l.principalOutstandingZMW, 0);
-  const stage2 = loans.filter((l) => l.ifrs9Stage === 2).reduce((s, l) => s + l.principalOutstandingZMW, 0);
-  const stage3 = loans.filter((l) => l.ifrs9Stage === 3).reduce((s, l) => s + l.principalOutstandingZMW, 0);
+  const loanRows = await db
+    .select({
+      principalOutstandingZMW: loans.principalOutstandingZMW,
+      ifrs9Stage: loans.ifrs9Stage,
+      daysInArrears: loans.daysInArrears,
+      eclProvisionZMW: loans.eclProvisionZMW,
+    })
+    .from(loans)
+    .where(inArray(loans.status, ['ACTIVE', 'IN_ARREARS', 'RESTRUCTURED', 'DEFAULTED']));
+  const totalOutstanding = loanRows.reduce((s, l) => s + l.principalOutstandingZMW, 0);
+  const stage1 = loanRows.filter((l) => l.ifrs9Stage === 1).reduce((s, l) => s + l.principalOutstandingZMW, 0);
+  const stage2 = loanRows.filter((l) => l.ifrs9Stage === 2).reduce((s, l) => s + l.principalOutstandingZMW, 0);
+  const stage3 = loanRows.filter((l) => l.ifrs9Stage === 3).reduce((s, l) => s + l.principalOutstandingZMW, 0);
   const nplLoans = stage3;
   const nplRatio = totalOutstanding > 0 ? (nplLoans / totalOutstanding) * 100 : 0;
-  const ecl = loans.reduce((s, l) => s + l.eclProvisionZMW, 0);
-  const bucket0to30 = loans.filter((l) => l.daysInArrears > 0 && l.daysInArrears <= 30).length;
-  const bucket31to60 = loans.filter((l) => l.daysInArrears > 30 && l.daysInArrears <= 60).length;
-  const bucket61to90 = loans.filter((l) => l.daysInArrears > 60 && l.daysInArrears <= 90).length;
-  const bucket91Plus = loans.filter((l) => l.daysInArrears > 90).length;
+  const ecl = loanRows.reduce((s, l) => s + l.eclProvisionZMW, 0);
+  const bucket0to30 = loanRows.filter((l) => l.daysInArrears > 0 && l.daysInArrears <= 30).length;
+  const bucket31to60 = loanRows.filter((l) => l.daysInArrears > 30 && l.daysInArrears <= 60).length;
+  const bucket61to90 = loanRows.filter((l) => l.daysInArrears > 60 && l.daysInArrears <= 90).length;
+  const bucket91Plus = loanRows.filter((l) => l.daysInArrears > 90).length;
 
   return {
     periodStart,
@@ -219,14 +226,24 @@ export interface LargeExposuresReport {
 }
 
 export async function generateLargeExposuresReport(periodStart: Date, periodEnd: Date): Promise<LargeExposuresReport> {
-  const capital = 100_000; // simplified; production: actual regulatory capital
-  const loans = await prisma.loan.findMany({
-    where: { status: { in: ['ACTIVE', 'IN_ARREARS', 'RESTRUCTURED'] } },
-    include: { borrower: { select: { id: true, borrowerNo: true, firstName: true, lastName: true } } },
-  });
+  const capital = 100_000;
+  const loanRows = await db
+    .select({
+      borrowerId: loans.borrowerId,
+      principalOutstandingZMW: loans.principalOutstandingZMW,
+      borrowerNo: borrowers.borrowerNo,
+      firstName: borrowers.firstName,
+      lastName: borrowers.lastName,
+    })
+    .from(loans)
+    .innerJoin(borrowers, eq(loans.borrowerId, borrowers.id))
+    .where(inArray(loans.status, ['ACTIVE', 'IN_ARREARS', 'RESTRUCTURED']));
   const byBorrower = new Map<string, { exposure: number; info: any }>();
-  for (const l of loans) {
-    const acc = byBorrower.get(l.borrowerId) ?? { exposure: 0, info: l.borrower };
+  for (const l of loanRows) {
+    const acc = byBorrower.get(l.borrowerId) ?? {
+      exposure: 0,
+      info: { id: l.borrowerId, borrowerNo: l.borrowerNo, firstName: l.firstName, lastName: l.lastName },
+    };
     acc.exposure += l.principalOutstandingZMW;
     byBorrower.set(l.borrowerId, acc);
   }
@@ -266,25 +283,23 @@ export interface RelatedPartyExposureReport {
 }
 
 export async function generateRelatedPartyReport(periodStart: Date, periodEnd: Date): Promise<RelatedPartyExposureReport> {
-  // Related party = a director, officer, or their close family
-  // For MVP, treat any borrower whose assigned officer is also a borrower as related
-  const users = await prisma.user.findMany({
-    select: { id: true, fullName: true, role: true },
-  });
-  const userIds = new Set(users.map((u) => u.id));
-  const relatedBorrowers = await prisma.borrower.findMany({
-    where: { assignedOfficerId: { in: Array.from(userIds) } },
-    select: { id: true, firstName: true, lastName: true, assignedOfficerId: true },
-  });
-  const officerNameByUser = new Map(users.map((u) => [u.id, u.fullName]));
+  const userRows = await db
+    .select({ id: users.id, fullName: users.fullName, role: users.role })
+    .from(users);
+  const userIds = userRows.map((u) => u.id);
+  const relatedBorrowers = userIds.length === 0 ? [] : await db
+    .select({ id: borrowers.id, firstName: borrowers.firstName, lastName: borrowers.lastName, assignedOfficerId: borrowers.assignedOfficerId })
+    .from(borrowers)
+    .where(inArray(borrowers.assignedOfficerId, userIds));
+  const officerNameByUser = new Map(userRows.map((u) => [u.id, u.fullName]));
   const capital = 100_000;
   const exposures: { name: string; relationship: string; exposureZMW: number; pctOfCapital: number }[] = [];
   for (const b of relatedBorrowers) {
-    const loans = await prisma.loan.findMany({
-      where: { borrowerId: b.id, status: { in: ['ACTIVE', 'IN_ARREARS', 'RESTRUCTURED'] } },
-      select: { principalOutstandingZMW: true },
-    });
-    const total = loans.reduce((s, l) => s + l.principalOutstandingZMW, 0);
+    const loanRows = await db
+      .select({ principalOutstandingZMW: loans.principalOutstandingZMW })
+      .from(loans)
+      .where(and(eq(loans.borrowerId, b.id), inArray(loans.status, ['ACTIVE', 'IN_ARREARS', 'RESTRUCTURED'])));
+    const total = loanRows.reduce((s, l) => s + l.principalOutstandingZMW, 0);
     if (total > 0 && b.assignedOfficerId) {
       exposures.push({
         name: `${b.firstName} ${b.lastName}`,
@@ -318,22 +333,20 @@ export async function snapshotBozReport(
   generatedById: string
 ): Promise<string> {
   const json = JSON.stringify(payload, null, 2);
-  const report = await prisma.bozReport.create({
-    data: {
-      reportType,
-      periodStart,
-      periodEnd,
-      payloadJson: json,
-      payloadSha256: sha256(json),
-      status: 'DRAFT',
-      generatedById,
-      totalCapitalZMW: typeof payload.totalRegulatoryCapitalZMW === 'number' ? payload.totalRegulatoryCapitalZMW as number : null,
-      totalRiskWeightedAssetsZMW: typeof payload.totalRWAZMW === 'number' ? payload.totalRWAZMW as number : null,
-      capitalAdequacyRatio: typeof payload.capitalAdequacyRatioPct === 'number' ? payload.capitalAdequacyRatioPct as number : null,
-      liquidAssetsZMW: typeof payload.liquidAssetsZMW === 'number' ? payload.liquidAssetsZMW as number : null,
-      liquidityRatio: typeof payload.liquidityRatioPct === 'number' ? payload.liquidityRatioPct as number : null,
-      nplRatio: typeof payload.nplRatioPct === 'number' ? payload.nplRatioPct as number : null,
-    },
-  });
+  const [report] = await db.insert(bozReports).values({
+    reportType,
+    periodStart,
+    periodEnd,
+    payloadJson: json,
+    payloadSha256: sha256(json),
+    status: 'DRAFT',
+    generatedById,
+    totalCapitalZMW: typeof payload.totalRegulatoryCapitalZMW === 'number' ? payload.totalRegulatoryCapitalZMW as number : null,
+    totalRiskWeightedAssetsZMW: typeof payload.totalRWAZMW === 'number' ? payload.totalRWAZMW as number : null,
+    capitalAdequacyRatio: typeof payload.capitalAdequacyRatioPct === 'number' ? payload.capitalAdequacyRatioPct as number : null,
+    liquidAssetsZMW: typeof payload.liquidAssetsZMW === 'number' ? payload.liquidAssetsZMW as number : null,
+    liquidityRatio: typeof payload.liquidityRatioPct === 'number' ? payload.liquidityRatioPct as number : null,
+    nplRatio: typeof payload.nplRatioPct === 'number' ? payload.nplRatioPct as number : null,
+  }).returning();
   return report.id;
 }

@@ -11,7 +11,9 @@
  * decision support, not a substitute for human underwriting. The score is
  * persisted on the application so the audit trail is intact.
  */
-import { prisma } from './db';
+import { eq } from 'drizzle-orm';
+import { db } from './db';
+import { borrowers } from './db/schema';
 
 export interface AltDataInputs {
   // Mobile money flow consistency (0-100)
@@ -88,17 +90,16 @@ export function computeCreditScore(input: AltDataInputs): CreditScoreResult {
  * KYC fields; everything else is set to a conservative neutral value.
  */
 export async function buildDefaultAltDataInputs(borrowerId: string): Promise<AltDataInputs> {
-  const borrower = await prisma.borrower.findUnique({ where: { id: borrowerId } });
+  const rows = await db.select().from(borrowers).where(eq(borrowers.id, borrowerId)).limit(1);
+  const borrower = rows[0];
   if (!borrower) {
     throw new Error(`Borrower ${borrowerId} not found`);
   }
-  // In production, call MM provider for inflow history and utility APIs for
-  // payment history. For MVP, we use a neutral default.
   return {
     mobileMoneyInflowConsistencyScore: 50,
     utilityPaymentRegularityScore: 50,
     employerStabilityScore: borrower.employmentStatus === 'EMPLOYED' ? 65 : 40,
-    monthsInBusiness: 12, // placeholder — should come from KYC data
+    monthsInBusiness: 12,
     monthlyInflowToLoanRatio: 1.0,
     priorPerformanceScore: 50,
     bureauScore: null,

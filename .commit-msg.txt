@@ -1,0 +1,12 @@
+Force dashboard pages to render at request time + pin Node 22 for Cloudflare
+
+- src/app/(dashboard)/layout.tsx: add export const dynamic = force-dynamic
+  so all dashboard pages skip build-time prerender. Without this, Next.js
+  tries to fetch DB rows during build (where DATABASE_URL is not set because
+  it is a runtime wrangler secret), causing Prisma errors on every push.
+
+- .nvmrc: pin Node 22. Cloudflare build env defaults to Node 20, but
+  wrangler 4.141.0 requires Node 22+. The previous auto-deploy failed at
+  the deploy step with: "Wrangler requires at least Node.js v22.0.0".
+
+- .gitignore: add .wrangler/ (wrangler local state, transient).

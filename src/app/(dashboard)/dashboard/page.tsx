@@ -1,4 +1,6 @@
-import { prisma } from '@/lib/db';
+import { sql, eq, gt, gte, inArray, desc, and } from 'drizzle-orm';
+import { db } from '@/lib/db';
+import { borrowers, loans, amlAlerts, repayments } from '@/lib/db/schema';
 import { getCurrentSession } from '@/lib/auth';
 import Link from 'next/link';
 import { formatZMW, formatPercent, formatDate } from '@/lib/utils';
@@ -16,37 +18,61 @@ export default async function DashboardHome() {
 
   // Last 30 days of daily disbursements and collections for the trend charts.
   const since30 = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-  const [borrowerCount, loanCount, activeLoans, openAlerts, capitalReport, liquidityReport, assetReport, overdueCount, todayRepayments, disbursedLoans30d, repayments30d] =
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const [borrowerCountRows, loanCountRows, activeLoansRows, openAlertsRows, capitalReport, liquidityReport, assetReport, overdueCountRows, todayRepaymentsRows, disbursedLoans30d, repayments30d] =
     await Promise.all([
-      prisma.borrower.count({ where: { status: 'ACTIVE' } }),
-      prisma.loan.count(),
-      prisma.loan.count({ where: { status: { in: ['ACTIVE', 'IN_ARREARS', 'RESTRUCTURED'] } } }),
-      prisma.amlAlert.count({ where: { status: 'OPEN' } }),
-      generateCapitalAdequacyReport(periodStart, periodEnd),
-      generateLiquidityReport(periodStart, periodEnd),
-      generateAssetQualityReport(periodStart, periodEnd),
-      prisma.loan.count({ where: { daysInArrears: { gt: 0 }, status: { in: ['ACTIVE', 'IN_ARREARS', 'RESTRUCTURED'] } } }),
-      prisma.repayment.aggregate({ _sum: { totalPaidZMW: true }, where: { receivedAt: { gte: new Date(now.getFullYear(), now.getMonth(), now.getDate()) } } }),
-      prisma.loan.findMany({ where: { disbursedAt: { gte: since30 } }, select: { disbursedAt: true, principalZMW: true } }),
-      prisma.repayment.findMany({ where: { receivedAt: { gte: since30 } }, select: { receivedAt: true, totalPaidZMW: true } }),
+      db.select({ c: sql<number>`count(*)::int` }).from(borrowers).where(eq(borrowers.status, 'ACTIVE')),
+      db.select({ c: sql<number>`count(*)::int` }).from(loans),
+      db.select({ c: sql<number>`count(*)::int` }).from(loans).where(inArray(loans.status, ['ACTIVE', 'IN_ARREARS', 'RESTRUCTURED'])),
+      db.select({ c: sql<number>`count(*)::int` }).from(amlAlerts).where(eq(amlAlerts.status, 'OPEN')),
+      Promise.resolve(generateCapitalAdequacyReport(periodStart, periodEnd)),
+      Promise.resolve(generateLiquidityReport(periodStart, periodEnd)),
+      Promise.resolve(generateAssetQualityReport(periodStart, periodEnd)),
+      db.select({ c: sql<number>`count(*)::int` }).from(loans).where(and(gt(loans.daysInArrears, 0), inArray(loans.status, ['ACTIVE', 'IN_ARREARS', 'RESTRUCTURED']))),
+      db.select({ s: sql<number>`coalesce(sum(${repayments.totalPaidZMW}), 0)::float` }).from(repayments).where(gte(repayments.receivedAt, todayStart)),
+      db.select({ disbursedAt: loans.disbursedAt, principalZMW: loans.principalZMW }).from(loans).where(gte(loans.disbursedAt, since30)),
+      db.select({ receivedAt: repayments.receivedAt, totalPaidZMW: repayments.totalPaidZMW }).from(repayments).where(gte(repayments.receivedAt, since30)),
     ]);
 
-  const disbursementByDay = bucketByDay(disbursedLoans30d.map((l) => ({ at: l.disbursedAt!, amount: l.principalZMW })), since30, 30);
+  const borrowerCount = borrowerCountRows[0]?.c ?? 0;
+  const loanCount = loanCountRows[0]?.c ?? 0;
+  const activeLoans = activeLoansRows[0]?.c ?? 0;
+  const openAlerts = openAlertsRows[0]?.c ?? 0;
+  const overdueCount = overdueCountRows[0]?.c ?? 0;
+  const todayAmount = todayRepaymentsRows[0]?.s ?? 0;
+
+  const disbursementByDay = bucketByDay(disbursedLoans30d.filter((l) => l.disbursedAt).map((l) => ({ at: l.disbursedAt!, amount: l.principalZMW })), since30, 30);
   const collectionsByDay = bucketByDay(repayments30d.map((r) => ({ at: r.receivedAt, amount: r.totalPaidZMW })), since30, 30);
 
-  const todayAmount = todayRepayments._sum.totalPaidZMW ?? 0;
-  const overdueLoans = await prisma.loan.findMany({
-    where: { daysInArrears: { gt: 0 }, status: { in: ['ACTIVE', 'IN_ARREARS', 'RESTRUCTURED'] } },
-    include: { borrower: { select: { borrowerNo: true, firstName: true, lastName: true } } },
-    orderBy: { daysInArrears: 'desc' },
-    take: 5,
-  });
+  const overdueLoansRaw = await db
+    .select({
+      id: loans.id,
+      loanNo: loans.loanNo,
+      daysInArrears: loans.daysInArrears,
+      totalOutstandingZMW: loans.totalOutstandingZMW,
+      borrowerNo: borrowers.borrowerNo,
+      firstName: borrowers.firstName,
+      lastName: borrowers.lastName,
+    })
+    .from(loans)
+    .innerJoin(borrowers, eq(loans.borrowerId, borrowers.id))
+    .where(and(gt(loans.daysInArrears, 0), inArray(loans.status, ['ACTIVE', 'IN_ARREARS', 'RESTRUCTURED'])))
+    .orderBy(desc(loans.daysInArrears))
+    .limit(5);
+  const overdueLoans = overdueLoansRaw.map((l) => ({
+    id: l.id,
+    loanNo: l.loanNo,
+    daysInArrears: l.daysInArrears,
+    totalOutstandingZMW: l.totalOutstandingZMW,
+    borrower: { borrowerNo: l.borrowerNo, firstName: l.firstName, lastName: l.lastName },
+  }));
 
-  const recentAlerts = await prisma.amlAlert.findMany({
-    where: { status: 'OPEN' },
-    orderBy: { triggeredAt: 'desc' },
-    take: 5,
-  });
+  const recentAlerts = await db
+    .select()
+    .from(amlAlerts)
+    .where(eq(amlAlerts.status, 'OPEN'))
+    .orderBy(desc(amlAlerts.triggeredAt))
+    .limit(5);
 
   const greeting = (() => {
     const h = new Date().getHours();

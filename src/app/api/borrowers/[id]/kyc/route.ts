@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { readJsonBody } from '@/lib/request-body';
 import { z } from 'zod';
-import { prisma } from '@/lib/db';
+import { eq } from 'drizzle-orm';
+import { db } from '@/lib/db';
+import { borrowers, kycRiskAssessments } from '@/lib/db/schema';
 import { getSessionFromRequest, AuthorizationError, requireSession } from '@/lib/auth';
 import { audit } from '@/lib/audit';
 
@@ -18,35 +21,33 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     if (e instanceof AuthorizationError) return NextResponse.json({ error: e.message }, { status: e.status });
     throw e;
   }
-  let body: unknown;
-  try { body = await req.json(); } catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }); }
+  const body = await readJsonBody(req);
+  if (body === null) return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   const parsed = schema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: 'Invalid input' }, { status: 400 });
 
-  const borrower = await prisma.borrower.findUnique({ where: { id: params.id } });
+  const rows = await db.select().from(borrowers).where(eq(borrowers.id, params.id)).limit(1);
+  const borrower = rows[0];
   if (!borrower) return NextResponse.json({ error: 'Borrower not found' }, { status: 404 });
 
-  await prisma.borrower.update({
-    where: { id: params.id },
-    data: {
-      kycStatus: parsed.data.decision,
-      kycReviewedAt: new Date(),
-      kycReviewerId: session!.userId,
-      kycRiskRating: parsed.data.decision === 'APPROVED' ? (borrower.pepFlag ? 'HIGH' : 'LOW') : 'HIGH',
-      kycExpiresAt: parsed.data.decision === 'APPROVED'
-        ? new Date(Date.now() + 365 * 24 * 60 * 60 * 1000)
-        : null,
-    },
-  });
-  await prisma.kycRiskAssessment.create({
-    data: {
-      borrowerId: params.id,
-      assessedById: session!.userId,
-      riskRating: parsed.data.decision === 'APPROVED' ? (borrower.pepFlag ? 'HIGH' : 'LOW') : 'HIGH',
-      totalScore: parsed.data.decision === 'APPROVED' ? 30 : 100,
-      decision: parsed.data.decision === 'APPROVED' ? 'APPROVE' : 'DECLINE',
-      decisionReason: parsed.data.notes ?? '',
-    },
+  const riskRating = parsed.data.decision === 'APPROVED' ? (borrower.pepFlag ? 'HIGH' : 'LOW') : 'HIGH';
+  await db.update(borrowers).set({
+    kycStatus: parsed.data.decision,
+    kycReviewedAt: new Date(),
+    kycReviewerId: session!.userId,
+    kycRiskRating: riskRating,
+    kycExpiresAt: parsed.data.decision === 'APPROVED'
+      ? new Date(Date.now() + 365 * 24 * 60 * 60 * 1000)
+      : null,
+  }).where(eq(borrowers.id, params.id));
+
+  await db.insert(kycRiskAssessments).values({
+    borrowerId: params.id,
+    assessedById: session!.userId,
+    riskRating,
+    totalScore: parsed.data.decision === 'APPROVED' ? 30 : 100,
+    decision: parsed.data.decision === 'APPROVED' ? 'APPROVE' : 'DECLINE',
+    decisionReason: parsed.data.notes ?? '',
   });
 
   await audit({

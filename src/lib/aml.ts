@@ -18,7 +18,9 @@
  * threshold, it produces an `AmlAlert` row. A separate `CtrRecord` / `StrRecord`
  * is then generated for FIC submission.
  */
-import { prisma } from './db';
+import { and, eq, gte, lt } from 'drizzle-orm';
+import { db } from './db';
+import { mobileMoneyTransactions, amlAlerts, ctrRecords, strRecords } from './db/schema';
 import { CTR_THRESHOLD_USD, STR_FILING_DEADLINE_DAYS } from './types';
 
 // -----------------------------------------------------------------------------
@@ -78,15 +80,16 @@ export async function getSameDayCashTotalZMW(customerKey: string, when: Date): P
   const endOfDay = new Date(startOfDay);
   endOfDay.setDate(endOfDay.getDate() + 1);
   // customerKey can be a borrowerId or a phone (msisdn)
-  const txns = await prisma.mobileMoneyTransaction.findMany({
-    where: {
-      msisdn: customerKey,
-      initiatedAt: { gte: startOfDay, lt: endOfDay },
-      direction: 'INBOUND',
-      status: 'SUCCESSFUL',
-    },
-    select: { amountZMW: true },
-  });
+  const txns = await db
+    .select({ amountZMW: mobileMoneyTransactions.amountZMW })
+    .from(mobileMoneyTransactions)
+    .where(and(
+      eq(mobileMoneyTransactions.msisdn, customerKey),
+      gte(mobileMoneyTransactions.initiatedAt, startOfDay),
+      lt(mobileMoneyTransactions.initiatedAt, endOfDay),
+      eq(mobileMoneyTransactions.direction, 'INBOUND'),
+      eq(mobileMoneyTransactions.status, 'SUCCESSFUL'),
+    ));
   return txns.reduce((s, t) => s + t.amountZMW, 0);
 }
 
@@ -103,18 +106,16 @@ export async function generateCtrRecord(input: {
   transactionDate: Date;
   transactionType: 'DEPOSIT' | 'WITHDRAWAL' | 'TRANSFER';
 }): Promise<void> {
-  await prisma.ctrRecord.create({
-    data: {
-      alertId: input.alertId,
-      borrowerId: input.borrowerId ?? null,
-      customerName: input.customerName,
-      customerNrc: input.customerNrc ?? null,
-      amountZMW: input.amountZMW,
-      amountUSD: input.amountZMW / USD_TO_ZMW,
-      transactionDate: input.transactionDate,
-      transactionType: input.transactionType,
-      status: 'DRAFT',
-    },
+  await db.insert(ctrRecords).values({
+    alertId: input.alertId,
+    borrowerId: input.borrowerId ?? null,
+    customerName: input.customerName,
+    customerNrc: input.customerNrc ?? null,
+    amountZMW: input.amountZMW,
+    amountUSD: input.amountZMW / USD_TO_ZMW,
+    transactionDate: input.transactionDate,
+    transactionType: input.transactionType,
+    status: 'DRAFT',
   });
 }
 
@@ -170,36 +171,29 @@ export interface StrTriggerInput {
 
 /** Open an STR alert and a draft `StrRecord` with the 2-working-day deadline. */
 export async function openStr(input: StrTriggerInput): Promise<{ alertId: string; strRecordId: string; filingDeadline: Date }> {
-  const alert = await prisma.amlAlert.create({
-    data: {
-      alertType: 'STR',
-      severity: 'HIGH',
-      borrowerId: input.borrowerId,
-      loanId: input.loanId,
-      repaymentId: input.repaymentId,
-      ruleCode: input.ruleCode,
-      description: input.description,
-      evidenceJson: JSON.stringify(input.evidence),
-      status: 'OPEN',
-    },
-  });
+  const [alert] = await db.insert(amlAlerts).values({
+    alertType: 'STR',
+    severity: 'HIGH',
+    borrowerId: input.borrowerId,
+    loanId: input.loanId,
+    repaymentId: input.repaymentId,
+    ruleCode: input.ruleCode,
+    description: input.description,
+    evidenceJson: JSON.stringify(input.evidence),
+    status: 'OPEN',
+  }).returning();
   const filingDeadline = new Date();
   filingDeadline.setDate(filingDeadline.getDate() + STR_FILING_DEADLINE_DAYS);
-  const strRecord = await prisma.strRecord.create({
-    data: {
-      alertId: alert.id,
-      borrowerId: input.borrowerId,
-      subjectName: input.description.slice(0, 200),
-      suspicionSummary: input.description,
-      suspicionType: 'ML',
-      status: 'DRAFT',
-      filingDeadline,
-    },
-  });
-  await prisma.amlAlert.update({
-    where: { id: alert.id },
-    data: { ficReportId: strRecord.id },
-  });
+  const [strRecord] = await db.insert(strRecords).values({
+    alertId: alert.id,
+    borrowerId: input.borrowerId,
+    subjectName: input.description.slice(0, 200),
+    suspicionSummary: input.description,
+    filingReason: input.ruleCode,
+    status: 'DRAFT',
+    filingDeadline,
+  }).returning();
+  await db.update(amlAlerts).set({ ficReportId: strRecord.id }).where(eq(amlAlerts.id, alert.id));
   return { alertId: alert.id, strRecordId: strRecord.id, filingDeadline };
 }
 
@@ -216,31 +210,27 @@ export async function openCtr(input: {
   customerName: string;
   customerNrc?: string | null;
 }): Promise<string> {
-  const alert = await prisma.amlAlert.create({
-    data: {
-      alertType: 'CTR',
-      severity: 'MEDIUM',
-      borrowerId: input.borrowerId,
-      loanId: input.loanId,
-      repaymentId: input.repaymentId,
-      ruleCode: 'CTR_THRESHOLD_USD_10K',
-      description: input.description,
-      evidenceJson: JSON.stringify(input.evidence),
-      status: 'OPEN',
-    },
-  });
-  await prisma.ctrRecord.create({
-    data: {
-      alertId: alert.id,
-      borrowerId: input.borrowerId,
-      customerName: input.customerName,
-      customerNrc: input.customerNrc ?? null,
-      amountZMW: input.amountZMW,
-      amountUSD: input.amountZMW / USD_TO_ZMW,
-      transactionDate: input.transactionDate,
-      transactionType: input.transactionType,
-      status: 'DRAFT',
-    },
+  const [alert] = await db.insert(amlAlerts).values({
+    alertType: 'CTR',
+    severity: 'MEDIUM',
+    borrowerId: input.borrowerId,
+    loanId: input.loanId,
+    repaymentId: input.repaymentId,
+    ruleCode: 'CTR_THRESHOLD_USD_10K',
+    description: input.description,
+    evidenceJson: JSON.stringify(input.evidence),
+    status: 'OPEN',
+  }).returning();
+  await db.insert(ctrRecords).values({
+    alertId: alert.id,
+    borrowerId: input.borrowerId,
+    customerName: input.customerName,
+    customerNrc: input.customerNrc ?? null,
+    amountZMW: input.amountZMW,
+    amountUSD: input.amountZMW / USD_TO_ZMW,
+    transactionDate: input.transactionDate,
+    transactionType: input.transactionType,
+    status: 'DRAFT',
   });
   return alert.id;
 }

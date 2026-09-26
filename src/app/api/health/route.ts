@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/db';
+import { sql } from 'drizzle-orm';
+import { db } from '@/lib/db';
+import { users, branches, borrowers, loans, repayments, amlAlerts, auditLogs } from '@/lib/db/schema';
 
 /**
  * Health endpoint — used by uptime monitors / load balancers.
@@ -15,17 +17,26 @@ export async function GET(req: Request) {
   let dbError: string | null = null;
   let counts: Record<string, number> | null = null;
   try {
-    await prisma.$queryRaw`SELECT 1`;
+    await db.execute(sql`SELECT 1`);
     dbOk = true;
     if (detail) {
+      const [u, b, br, l, r, a, al] = await Promise.all([
+        db.select({ c: sql<number>`count(*)::int` }).from(users),
+        db.select({ c: sql<number>`count(*)::int` }).from(branches),
+        db.select({ c: sql<number>`count(*)::int` }).from(borrowers),
+        db.select({ c: sql<number>`count(*)::int` }).from(loans),
+        db.select({ c: sql<number>`count(*)::int` }).from(repayments),
+        db.select({ c: sql<number>`count(*)::int` }).from(amlAlerts),
+        db.select({ c: sql<number>`count(*)::int` }).from(auditLogs),
+      ]);
       counts = {
-        users: await prisma.user.count(),
-        branches: await prisma.branch.count(),
-        borrowers: await prisma.borrower.count(),
-        loans: await prisma.loan.count(),
-        repayments: await prisma.repayment.count(),
-        amlAlerts: await prisma.amlAlert.count(),
-        auditEntries: await prisma.auditLog.count(),
+        users: u[0]?.c ?? 0,
+        branches: b[0]?.c ?? 0,
+        borrowers: br[0]?.c ?? 0,
+        loans: l[0]?.c ?? 0,
+        repayments: r[0]?.c ?? 0,
+        amlAlerts: a[0]?.c ?? 0,
+        auditEntries: al[0]?.c ?? 0,
       };
     }
   } catch (e) {

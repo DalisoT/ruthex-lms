@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { readJsonBody } from '@/lib/request-body';
 import { z } from 'zod';
-import { prisma } from '@/lib/db';
+import { eq } from 'drizzle-orm';
+import { db } from '@/lib/db';
+import { loanProducts } from '@/lib/db/schema';
 import { getSessionFromRequest, AuthorizationError } from '@/lib/auth';
 import { assertRole } from '@/lib/rbac';
 import { audit } from '@/lib/audit';
@@ -32,15 +35,15 @@ export async function POST(req: NextRequest) {
     if (e instanceof AuthorizationError) return NextResponse.json({ error: e.message }, { status: e.status });
     throw e;
   }
-  let body: unknown;
-  try { body = await req.json(); } catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }); }
+  const body = await readJsonBody(req);
+  if (body === null) return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   const parsed = schema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: 'Invalid input' }, { status: 400 });
   if (parsed.data.minTermMonths > parsed.data.maxTermMonths) return NextResponse.json({ error: 'minTermMonths cannot exceed maxTermMonths' }, { status: 400 });
   if (parsed.data.minAmountZMW > parsed.data.maxAmountZMW) return NextResponse.json({ error: 'minAmountZMW cannot exceed maxAmountZMW' }, { status: 400 });
-  const exists = await prisma.loanProduct.findUnique({ where: { name: parsed.data.name } });
-  if (exists) return NextResponse.json({ error: 'Product with this name already exists' }, { status: 409 });
-  const product = await prisma.loanProduct.create({ data: parsed.data });
+  const existing = await db.select().from(loanProducts).where(eq(loanProducts.name, parsed.data.name)).limit(1);
+  if (existing.length > 0) return NextResponse.json({ error: 'Product with this name already exists' }, { status: 409 });
+  const [product] = await db.insert(loanProducts).values(parsed.data).returning();
   await audit({
     userId: session!.userId,
     action: 'CREATE_LOAN_PRODUCT',

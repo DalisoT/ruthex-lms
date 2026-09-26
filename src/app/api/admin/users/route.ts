@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { readJsonBody } from '@/lib/request-body';
 import { z } from 'zod';
 import crypto from 'crypto';
-import { prisma } from '@/lib/db';
+import { eq } from 'drizzle-orm';
+import { db } from '@/lib/db';
+import { users } from '@/lib/db/schema';
 import { getSessionFromRequest, hashPassword, AuthorizationError } from '@/lib/auth';
 import { assertRole } from '@/lib/rbac';
 import { audit } from '@/lib/audit';
@@ -34,27 +37,25 @@ export async function POST(req: NextRequest) {
     if (e instanceof AuthorizationError) return NextResponse.json({ error: e.message }, { status: e.status });
     throw e;
   }
-  let body: unknown;
-  try { body = await req.json(); } catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }); }
+  const body = await readJsonBody(req);
+  if (body === null) return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: 'Invalid input', details: parsed.error.flatten() }, { status: 400 });
 
-  const exists = await prisma.user.findUnique({ where: { email: parsed.data.email } });
-  if (exists) return NextResponse.json({ error: 'Email already in use' }, { status: 409 });
+  const existing = await db.select().from(users).where(eq(users.email, parsed.data.email)).limit(1);
+  if (existing.length > 0) return NextResponse.json({ error: 'Email already in use' }, { status: 409 });
 
   const tempPassword = generateTempPassword();
   const hash = await hashPassword(tempPassword);
-  const user = await prisma.user.create({
-    data: {
-      email: parsed.data.email,
-      passwordHash: hash,
-      fullName: parsed.data.fullName,
-      phone: parsed.data.phone ?? null,
-      role: parsed.data.role,
-      branchId: parsed.data.branchId,
-      fitProperStatus: parsed.data.fitProperStatus ?? null,
-    },
-  });
+  const [user] = await db.insert(users).values({
+    email: parsed.data.email,
+    passwordHash: hash,
+    fullName: parsed.data.fullName,
+    phone: parsed.data.phone ?? null,
+    role: parsed.data.role,
+    branchId: parsed.data.branchId,
+    fitProperStatus: parsed.data.fitProperStatus ?? null,
+  }).returning();
   await audit({
     userId: session!.userId,
     action: 'CREATE_USER',

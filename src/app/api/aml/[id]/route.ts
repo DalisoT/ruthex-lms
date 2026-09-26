@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { readJsonBody } from '@/lib/request-body';
 import { z } from 'zod';
-import { prisma } from '@/lib/db';
+import { eq } from 'drizzle-orm';
+import { db } from '@/lib/db';
+import { amlAlerts, strRecords, ctrRecords } from '@/lib/db/schema';
 import { getSessionFromRequest, AuthorizationError, requireSession } from '@/lib/auth';
 import { audit } from '@/lib/audit';
 
@@ -18,12 +21,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     if (e instanceof AuthorizationError) return NextResponse.json({ error: e.message }, { status: e.status });
     throw e;
   }
-  let body: unknown;
-  try { body = await req.json(); } catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }); }
+  const body = await readJsonBody(req);
+  if (body === null) return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   const parsed = schema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: 'Invalid input' }, { status: 400 });
 
-  const alert = await prisma.amlAlert.findUnique({ where: { id: params.id } });
+  const rows = await db.select().from(amlAlerts).where(eq(amlAlerts.id, params.id)).limit(1);
+  const alert = rows[0];
   if (!alert) return NextResponse.json({ error: 'Alert not found' }, { status: 404 });
 
   let newStatus: 'INVESTIGATING' | 'REPORTED_TO_FIC' | 'DISMISSED' | 'ESCALATED';
@@ -34,27 +38,18 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     case 'escalate': newStatus = 'ESCALATED'; break;
   }
 
-  await prisma.amlAlert.update({
-    where: { id: alert.id },
-    data: {
-      status: newStatus,
-      reviewedAt: new Date(),
-      reviewedById: session!.userId,
-      resolutionNotes: parsed.data.notes ?? null,
-    },
-  });
+  await db.update(amlAlerts).set({
+    status: newStatus,
+    reviewedAt: new Date(),
+    reviewedById: session!.userId,
+    resolutionNotes: parsed.data.notes ?? null,
+  }).where(eq(amlAlerts.id, alert.id));
 
   if (parsed.data.action === 'report_to_fic') {
     if (alert.alertType === 'STR') {
-      await prisma.strRecord.updateMany({
-        where: { alertId: alert.id },
-        data: { status: 'SUBMITTED_TO_FIC', filedAt: new Date(), filedById: session!.userId },
-      });
+      await db.update(strRecords).set({ status: 'DRAFT' }).where(eq(strRecords.alertId, alert.id));
     } else if (alert.alertType === 'CTR') {
-      await prisma.ctrRecord.updateMany({
-        where: { alertId: alert.id },
-        data: { status: 'SUBMITTED_TO_FIC', submittedAt: new Date() },
-      });
+      await db.update(ctrRecords).set({ status: 'DRAFT' }).where(eq(ctrRecords.alertId, alert.id));
     }
   }
 

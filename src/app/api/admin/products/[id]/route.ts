@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { readJsonBody } from '@/lib/request-body';
 import { z } from 'zod';
-import { prisma } from '@/lib/db';
+import { eq } from 'drizzle-orm';
+import { db } from '@/lib/db';
+import { loanProducts } from '@/lib/db/schema';
 import { getSessionFromRequest, AuthorizationError } from '@/lib/auth';
 import { assertRole } from '@/lib/rbac';
 import { audit } from '@/lib/audit';
@@ -32,15 +35,15 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if (e instanceof AuthorizationError) return NextResponse.json({ error: e.message }, { status: e.status });
     throw e;
   }
-  let body: unknown;
-  try { body = await req.json(); } catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }); }
+  const body = await readJsonBody(req);
+  if (body === null) return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   const parsed = schema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: 'Invalid input' }, { status: 400 });
   if (parsed.data.minTermMonths > parsed.data.maxTermMonths) return NextResponse.json({ error: 'minTermMonths cannot exceed maxTermMonths' }, { status: 400 });
   if (parsed.data.minAmountZMW > parsed.data.maxAmountZMW) return NextResponse.json({ error: 'minAmountZMW cannot exceed maxAmountZMW' }, { status: 400 });
-  const before = await prisma.loanProduct.findUnique({ where: { id: params.id } });
-  if (!before) return NextResponse.json({ error: 'Product not found' }, { status: 404 });
-  const product = await prisma.loanProduct.update({ where: { id: params.id }, data: parsed.data });
+  const beforeRows = await db.select().from(loanProducts).where(eq(loanProducts.id, params.id)).limit(1);
+  if (!beforeRows[0]) return NextResponse.json({ error: 'Product not found' }, { status: 404 });
+  const [product] = await db.update(loanProducts).set(parsed.data).where(eq(loanProducts.id, params.id)).returning();
   await audit({
     userId: session!.userId,
     action: 'UPDATE_LOAN_PRODUCT',

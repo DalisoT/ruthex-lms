@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { readJsonBody } from '@/lib/request-body';
 import { z } from 'zod';
-import { prisma } from '@/lib/db';
+import { sql, eq, asc, and, inArray } from 'drizzle-orm';
+import { db } from '@/lib/db';
+import { loans, repayments, repaymentSchedule, borrowers } from '@/lib/db/schema';
 import { getSessionFromRequest, AuthorizationError, requireSession } from '@/lib/auth';
 import { audit } from '@/lib/audit';
-import { evaluateTransactionForCtr, getSameDayCashTotalZMW, openCtr, openStr, USD_TO_ZMW } from '@/lib/aml';
+import { evaluateTransactionForCtr, getSameDayCashTotalZMW, openCtr, openStr } from '@/lib/aml';
 import { runAllDetectors } from '@/lib/aml-engine';
 import { getMobileMoneyAdapter, normalizeMsisdn } from '@/lib/mobile-money';
 import { nextReceiptNo } from '@/lib/utils';
@@ -28,34 +31,54 @@ export async function POST(req: NextRequest) {
     if (e instanceof AuthorizationError) return NextResponse.json({ error: e.message }, { status: e.status });
     throw e;
   }
-
-  let body: unknown;
-  try { body = await req.json(); } catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }); }
+  const body = await readJsonBody(req);
+  if (body === null) return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   const parsed = schema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: 'Invalid input' }, { status: 400 });
 
-  const loan = await prisma.loan.findUnique({
-    where: { id: parsed.data.loanId },
-    include: { borrower: true },
-  });
+  const loanRows = await db
+    .select({
+      id: loans.id,
+      loanNo: loans.loanNo,
+      status: loans.status,
+      principalOutstandingZMW: loans.principalOutstandingZMW,
+      interestOutstandingZMW: loans.interestOutstandingZMW,
+      feesOutstandingZMW: loans.feesOutstandingZMW,
+      totalOutstandingZMW: loans.totalOutstandingZMW,
+      daysInArrears: loans.daysInArrears,
+      disbursedAt: loans.disbursedAt,
+      borrowerId: loans.borrowerId,
+      borrowerFirstName: borrowers.firstName,
+      borrowerLastName: borrowers.lastName,
+      borrowerPhone: borrowers.phone,
+      borrowerNrcNumber: borrowers.nrcNumber,
+    })
+    .from(loans)
+    .innerJoin(borrowers, eq(loans.borrowerId, borrowers.id))
+    .where(eq(loans.id, parsed.data.loanId))
+    .limit(1);
+  const loan = loanRows[0];
   if (!loan) return NextResponse.json({ error: 'Loan not found' }, { status: 404 });
 
-  // FIFO allocation: principal first, then interest, then fees
   const totalPaid = parsed.data.totalPaidZMW;
   let principalPaid = Math.min(loan.principalOutstandingZMW, totalPaid);
   let interestPaid = Math.min(loan.interestOutstandingZMW, Math.max(0, totalPaid - principalPaid));
   let feesPaid = Math.max(0, totalPaid - principalPaid - interestPaid);
 
-  // Pick the oldest due installment for marking
-  const oldestDueInstallment = await prisma.repaymentSchedule.findFirst({
-    where: { loanId: loan.id, status: { in: ['PENDING', 'PARTIAL', 'OVERDUE'] } },
-    orderBy: { dueDate: 'asc' },
-  });
+  const oldestRows = await db
+    .select()
+    .from(repaymentSchedule)
+    .where(and(
+      eq(repaymentSchedule.loanId, loan.id),
+      inArray(repaymentSchedule.status, ['PENDING', 'PARTIAL', 'OVERDUE']),
+    ))
+    .orderBy(asc(repaymentSchedule.dueDate))
+    .limit(1);
+  const oldestDueInstallment = oldestRows[0];
 
-  const count = await prisma.repayment.count();
-  const receiptNo = nextReceiptNo(count + 1);
+  const countRows = await db.select({ c: sql<number>`count(*)::int` }).from(repayments);
+  const receiptNo = nextReceiptNo((countRows[0]?.c ?? 0) + 1);
 
-  // If mobile money, initiate collection via adapter (mock auto-succeeds)
   let mmTxnId: string | null = null;
   if (parsed.data.paymentMethod === 'MOBILE_MONEY' && parsed.data.msisdn && parsed.data.paymentChannel) {
     const adapter = getMobileMoneyAdapter();
@@ -70,26 +93,23 @@ export async function POST(req: NextRequest) {
     mmTxnId = result.externalId;
   }
 
-  const repayment = await prisma.repayment.create({
-    data: {
-      receiptNo,
-      loanId: loan.id,
-      installmentId: oldestDueInstallment?.id ?? null,
-      recordedById: session!.userId,
-      principalPaidZMW: principalPaid,
-      interestPaidZMW: interestPaid,
-      feesPaidZMW: feesPaid,
-      totalPaidZMW: totalPaid,
-      paymentMethod: parsed.data.paymentMethod,
-      paymentChannel: parsed.data.paymentChannel ?? null,
-      externalRef: mmTxnId,
-      paidByName: parsed.data.paidByName,
-      paidByRelation: parsed.data.paidByRelation,
-      notes: parsed.data.notes,
-    },
-  });
+  const [repayment] = await db.insert(repayments).values({
+    receiptNo,
+    loanId: loan.id,
+    installmentId: oldestDueInstallment?.id ?? null,
+    recordedById: session!.userId,
+    principalPaidZMW: principalPaid,
+    interestPaidZMW: interestPaid,
+    feesPaidZMW: feesPaid,
+    totalPaidZMW: totalPaid,
+    paymentMethod: parsed.data.paymentMethod,
+    paymentChannel: parsed.data.paymentChannel ?? null,
+    externalRef: mmTxnId,
+    paidByName: parsed.data.paidByName ?? null,
+    paidByRelation: parsed.data.paidByRelation ?? null,
+    notes: parsed.data.notes ?? null,
+  }).returning();
 
-  // Update loan outstanding + status + days in arrears
   const newPrincipal = Math.max(0, loan.principalOutstandingZMW - principalPaid);
   const newInterest = Math.max(0, loan.interestOutstandingZMW - interestPaid);
   const newFees = Math.max(0, loan.feesOutstandingZMW - feesPaid);
@@ -98,41 +118,31 @@ export async function POST(req: NextRequest) {
   if (loan.status === 'PENDING_DISBURSEMENT' && loan.disbursedAt) newStatus = 'ACTIVE';
   if (newOutstanding <= 0.01) newStatus = 'CLOSED';
   if (loan.daysInArrears > 0 && newPrincipal > 0) {
-    // still in arrears
     if (newStatus === 'ACTIVE') newStatus = 'IN_ARREARS';
   } else if (loan.daysInArrears === 0 && newStatus === 'IN_ARREARS') {
     newStatus = 'ACTIVE';
   }
-  // Update IFRS 9 staging — provision simple reclass: stage 3 if days > 90
   const newStage = loan.daysInArrears > 90 ? 3 : loan.daysInArrears > 30 ? 2 : 1;
-  await prisma.loan.update({
-    where: { id: loan.id },
-    data: {
-      principalOutstandingZMW: newPrincipal,
-      interestOutstandingZMW: newInterest,
-      feesOutstandingZMW: newFees,
-      totalOutstandingZMW: newOutstanding,
-      status: newStatus,
-      ifrs9Stage: newStage,
-    },
-  });
+  await db.update(loans).set({
+    principalOutstandingZMW: newPrincipal,
+    interestOutstandingZMW: newInterest,
+    feesOutstandingZMW: newFees,
+    totalOutstandingZMW: newOutstanding,
+    status: newStatus,
+    ifrs9Stage: newStage,
+  }).where(eq(loans.id, loan.id));
 
-  // Mark installment progress
   if (oldestDueInstallment) {
     const remainingForThis = oldestDueInstallment.totalDue - (oldestDueInstallment.totalPaid + totalPaid);
-    let newInstStatus: 'PENDING' | 'PARTIAL' | 'PAID' = 'PARTIAL';
-    if (remainingForThis <= 0.01) newInstStatus = 'PAID';
-    await prisma.repaymentSchedule.update({
-      where: { id: oldestDueInstallment.id },
-      data: {
-        principalPaid: oldestDueInstallment.principalPaid + principalPaid,
-        interestPaid: oldestDueInstallment.interestPaid + interestPaid,
-        feesPaid: oldestDueInstallment.feesPaid + feesPaid,
-        totalPaid: oldestDueInstallment.totalPaid + totalPaid,
-        paidAt: new Date(),
-        status: newInstStatus,
-      },
-    });
+    const newInstStatus: 'PENDING' | 'PARTIAL' | 'PAID' = remainingForThis <= 0.01 ? 'PAID' : 'PARTIAL';
+    await db.update(repaymentSchedule).set({
+      principalPaid: oldestDueInstallment.principalPaid + principalPaid,
+      interestPaid: oldestDueInstallment.interestPaid + interestPaid,
+      feesPaid: oldestDueInstallment.feesPaid + feesPaid,
+      totalPaid: oldestDueInstallment.totalPaid + totalPaid,
+      paidAt: new Date(),
+      status: newInstStatus,
+    }).where(eq(repaymentSchedule.id, oldestDueInstallment.id));
   }
 
   await audit({
@@ -143,15 +153,14 @@ export async function POST(req: NextRequest) {
     meta: { receiptNo, loanId: loan.id, totalPaid, mmTxnId },
   });
 
-  // AML engine — CTR evaluation and triggering
   let ctrTriggered = false;
   let strTriggered = false;
   if (parsed.data.paymentMethod === 'CASH' || parsed.data.paymentMethod === 'MOBILE_MONEY') {
-    const customerKey = parsed.data.msisdn ?? loan.borrower.phone ?? loan.borrower.id;
+    const customerKey = parsed.data.msisdn ?? loan.borrowerPhone ?? loan.borrowerId;
     const sameDayTotal = await getSameDayCashTotalZMW(customerKey, new Date());
     const evalResult = evaluateTransactionForCtr(totalPaid, sameDayTotal);
     if (evalResult.triggersCtr) {
-      const customerName = parsed.data.paidByName ?? `${loan.borrower.firstName} ${loan.borrower.lastName}`;
+      const customerName = parsed.data.paidByName ?? `${loan.borrowerFirstName} ${loan.borrowerLastName}`;
       await openCtr({
         borrowerId: loan.borrowerId,
         loanId: loan.id,
@@ -162,13 +171,12 @@ export async function POST(req: NextRequest) {
         transactionDate: new Date(),
         transactionType: 'DEPOSIT',
         customerName,
-        customerNrc: loan.borrower.nrcNumber,
+        customerNrc: loan.borrowerNrcNumber ?? null,
       });
       ctrTriggered = true;
     }
   }
-  // STR: third-party payer flag
-  if (parsed.data.paidByName && parsed.data.paidByName.trim() && loan.borrower.firstName + ' ' + loan.borrower.lastName !== parsed.data.paidByName.trim()) {
+  if (parsed.data.paidByName && parsed.data.paidByName.trim() && `${loan.borrowerFirstName} ${loan.borrowerLastName}` !== parsed.data.paidByName.trim()) {
     await openStr({
       ruleCode: 'THIRD_PARTY_PAYER',
       borrowerId: loan.borrowerId,
@@ -180,15 +188,18 @@ export async function POST(req: NextRequest) {
     strTriggered = true;
   }
 
-  // Extended AML: structuring, velocity, round-number, PEP-amount, loan cycling.
-  // These run for every repayment; each writes its own STR alert as needed.
   await runAllDetectors({
     borrowerId: loan.borrowerId,
     totalPaidZMW: totalPaid,
     msisdn: parsed.data.msisdn ?? null,
   });
-  if (strTriggered) await prisma.repayment.update({ where: { id: repayment.id }, data: { triggersStr: true } });
-  if (ctrTriggered) await prisma.repayment.update({ where: { id: repayment.id }, data: { triggersCtr: true } });
+
+  if (strTriggered || ctrTriggered) {
+    await db.update(repayments).set({
+      triggersStr: strTriggered,
+      triggersCtr: ctrTriggered,
+    }).where(eq(repayments.id, repayment.id));
+  }
 
   return NextResponse.json({
     ok: true,

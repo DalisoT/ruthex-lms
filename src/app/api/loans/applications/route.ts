@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { readJsonBody } from '@/lib/request-body';
 import { z } from 'zod';
-import { prisma } from '@/lib/db';
+import { sql, eq } from 'drizzle-orm';
+import { db } from '@/lib/db';
+import { borrowers, loanProducts, loanApplications, loans, repaymentSchedule } from '@/lib/db/schema';
 import { getSessionFromRequest, AuthorizationError, requireSession } from '@/lib/auth';
 import { audit } from '@/lib/audit';
 import { computeCreditScore, buildDefaultAltDataInputs } from '@/lib/credit-score';
@@ -24,18 +27,17 @@ export async function POST(req: NextRequest) {
     if (e instanceof AuthorizationError) return NextResponse.json({ error: e.message }, { status: e.status });
     throw e;
   }
-
-  let body: unknown;
-  try { body = await req.json(); } catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }); }
+  const body = await readJsonBody(req);
+  if (body === null) return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   const parsed = schema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: 'Invalid input' }, { status: 400 });
 
-  const borrower = await prisma.borrower.findUnique({ where: { id: parsed.data.borrowerId } });
+  const [borrower] = await db.select().from(borrowers).where(eq(borrowers.id, parsed.data.borrowerId)).limit(1);
   if (!borrower) return NextResponse.json({ error: 'Borrower not found' }, { status: 404 });
   if (borrower.kycStatus !== 'APPROVED') {
     return NextResponse.json({ error: 'Borrower KYC is not approved' }, { status: 400 });
   }
-  const product = await prisma.loanProduct.findUnique({ where: { id: parsed.data.productId } });
+  const [product] = await db.select().from(loanProducts).where(eq(loanProducts.id, parsed.data.productId)).limit(1);
   if (!product || !product.active) return NextResponse.json({ error: 'Product not available' }, { status: 400 });
 
   if (parsed.data.requestedAmountZMW < product.minAmountZMW || parsed.data.requestedAmountZMW > product.maxAmountZMW) {
@@ -45,14 +47,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `Term must be between ${product.minTermMonths} and ${product.maxTermMonths} months` }, { status: 400 });
   }
 
-  // Credit scoring
   const altInputs = await buildDefaultAltDataInputs(parsed.data.borrowerId);
   const result = computeCreditScore(altInputs);
 
-  const appCount = await prisma.loanApplication.count();
-  const applicationNo = nextApplicationNo(appCount + 1);
+  const appCountRows = await db.select({ c: sql<number>`count(*)::int` }).from(loanApplications);
+  const applicationNo = nextApplicationNo((appCountRows[0]?.c ?? 0) + 1);
 
-  // Auto-decide
   let status: 'SUBMITTED' | 'UNDER_REVIEW' | 'APPROVED' | 'REJECTED' = 'UNDER_REVIEW';
   let approvedAmount: number | null = null;
   let approvedTerm: number | null = null;
@@ -63,7 +63,6 @@ export async function POST(req: NextRequest) {
     status = 'REJECTED';
     rejectionReason = `Credit score ${result.score} (grade ${result.grade}) — auto-declined by policy.`;
   } else if (result.recommendation === 'APPROVE' && result.score >= 650) {
-    // Auto-approve small loan requests up to K50,000 at the limit; otherwise route to officer
     if (parsed.data.requestedAmountZMW <= 50_000) {
       status = 'APPROVED';
       approvedAmount = parsed.data.requestedAmountZMW;
@@ -74,38 +73,34 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const application = await prisma.loanApplication.create({
-    data: {
-      applicationNo,
-      borrowerId: parsed.data.borrowerId,
-      productId: parsed.data.productId,
-      requestedAmountZMW: parsed.data.requestedAmountZMW,
-      requestedTermMonths: parsed.data.requestedTermMonths,
-      purpose: parsed.data.purpose,
-      purposeDetail: parsed.data.purposeDetail ?? null,
-      creditScore: result.score,
-      creditGrade: result.grade,
-      creditFactors: JSON.stringify(result.factors),
-      status,
-      approvedAmountZMW: approvedAmount,
-      approvedTermMonths: approvedTerm,
-      approvedRatePct: approvedRate,
-      rejectionReason,
-      assignedOfficerId: session!.userId,
-      submittedAt: new Date(),
-      decisionedAt: status === 'APPROVED' || status === 'REJECTED' ? new Date() : null,
-      decidedById: status === 'APPROVED' || status === 'REJECTED' ? session!.userId : null,
-      altDataSnapshot: JSON.stringify(altInputs),
-    },
-  });
+  const [application] = await db.insert(loanApplications).values({
+    applicationNo,
+    borrowerId: parsed.data.borrowerId,
+    productId: parsed.data.productId,
+    requestedAmountZMW: parsed.data.requestedAmountZMW,
+    requestedTermMonths: parsed.data.requestedTermMonths,
+    purpose: parsed.data.purpose,
+    purposeDetail: parsed.data.purposeDetail ?? null,
+    creditScore: result.score,
+    creditGrade: result.grade,
+    creditFactors: JSON.stringify(result.factors),
+    status,
+    approvedAmountZMW: approvedAmount,
+    approvedTermMonths: approvedTerm,
+    approvedRatePct: approvedRate,
+    rejectionReason,
+    assignedOfficerId: session!.userId,
+    submittedAt: new Date(),
+    decisionedAt: status === 'APPROVED' || status === 'REJECTED' ? new Date() : null,
+    decidedById: status === 'APPROVED' || status === 'REJECTED' ? session!.userId : null,
+    altDataSnapshot: JSON.stringify(altInputs),
+  }).returning();
 
-  // If approved, create the active loan record
   let loanId: string | null = null;
   if (status === 'APPROVED' && approvedAmount && approvedTerm) {
-    const loanCount = await prisma.loan.count();
-    const loanNo = nextLoanNo(loanCount + 1);
+    const loanCountRows = await db.select({ c: sql<number>`count(*)::int` }).from(loans);
+    const loanNo = nextLoanNo((loanCountRows[0]?.c ?? 0) + 1);
 
-    // Build amortization to compute installment + first due date + maturity
     const startDate = new Date();
     const installments = buildAmortization(
       approvedAmount,
@@ -121,43 +116,38 @@ export async function POST(req: NextRequest) {
     const maturity = installments[installments.length - 1]?.dueDate ?? new Date(Date.now() + approvedTerm * 30 * 24 * 60 * 60 * 1000);
     const totalRepayable = installments.reduce((s, i) => s + i.totalDue, 0);
 
-    const loan = await prisma.loan.create({
-      data: {
-        loanNo,
-        borrowerId: parsed.data.borrowerId,
-        productId: product.id,
-        principalZMW: approvedAmount,
-        interestRateAnnualPct: product.interestRateAnnualPct,
-        interestMethod: product.interestMethod,
-        termMonths: approvedTerm,
-        repaymentFrequency: product.repaymentFrequency,
-        installmentZMW: installmentAmount,
-        totalRepayableZMW: totalRepayable,
-        firstPaymentDue: firstDue,
-        maturityDate: maturity,
-        status: 'PENDING_DISBURSEMENT',
-        principalOutstandingZMW: approvedAmount,
-        interestOutstandingZMW: 0,
-        feesOutstandingZMW: 0,
-        totalOutstandingZMW: approvedAmount,
-      },
-    });
+    const [loan] = await db.insert(loans).values({
+      loanNo,
+      borrowerId: parsed.data.borrowerId,
+      productId: product.id,
+      principalZMW: approvedAmount,
+      interestRateAnnualPct: product.interestRateAnnualPct,
+      interestMethod: product.interestMethod,
+      termMonths: approvedTerm,
+      repaymentFrequency: product.repaymentFrequency,
+      installmentZMW: installmentAmount,
+      totalRepayableZMW: totalRepayable,
+      firstPaymentDue: firstDue,
+      maturityDate: maturity,
+      status: 'PENDING_DISBURSEMENT',
+      principalOutstandingZMW: approvedAmount,
+      interestOutstandingZMW: 0,
+      feesOutstandingZMW: 0,
+      totalOutstandingZMW: approvedAmount,
+    }).returning();
     loanId = loan.id;
-    await prisma.loanApplication.update({ where: { id: application.id }, data: { loanId } });
+    await db.update(loanApplications).set({ loanId }).where(eq(loanApplications.id, application.id));
 
-    // Persist repayment schedule
-    for (const inst of installments) {
-      await prisma.repaymentSchedule.create({
-        data: {
-          loanId: loan.id,
-          installmentNo: inst.installmentNo,
-          dueDate: inst.dueDate,
-          principalDue: inst.principalDue,
-          interestDue: inst.interestDue,
-          feesDue: 0,
-          totalDue: inst.totalDue,
-        },
-      });
+    if (installments.length > 0) {
+      await db.insert(repaymentSchedule).values(installments.map((inst) => ({
+        loanId: loan.id,
+        installmentNo: inst.installmentNo,
+        dueDate: inst.dueDate,
+        principalDue: inst.principalDue,
+        interestDue: inst.interestDue,
+        feesDue: 0,
+        totalDue: inst.totalDue,
+      })));
     }
   }
 

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
-import { prisma } from '@/lib/db';
+import { eq } from 'drizzle-orm';
+import { db } from '@/lib/db';
+import { users } from '@/lib/db/schema';
 import { getSessionFromRequest, hashPassword, AuthorizationError } from '@/lib/auth';
 import { assertRole } from '@/lib/rbac';
 import { audit } from '@/lib/audit';
@@ -23,15 +25,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     if (e instanceof AuthorizationError) return NextResponse.json({ error: e.message }, { status: e.status });
     throw e;
   }
-  const user = await prisma.user.findUnique({ where: { id: params.id } });
+  const rows = await db.select().from(users).where(eq(users.id, params.id)).limit(1);
+  const user = rows[0];
   if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 });
 
   const tempPassword = generateTempPassword();
   const hash = await hashPassword(tempPassword);
-  await prisma.user.update({
-    where: { id: user.id },
-    data: { passwordHash: hash, failedLoginCount: 0 },
-  });
+  await db.update(users).set({ passwordHash: hash, failedLoginCount: 0 }).where(eq(users.id, user.id));
   await audit({
     userId: session!.userId,
     action: 'UPDATE_USER',

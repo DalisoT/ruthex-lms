@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/db';
+import { readJsonBody } from '@/lib/request-body';
+import { eq } from 'drizzle-orm';
+import { db } from '@/lib/db';
+import { loans, borrowers } from '@/lib/db/schema';
 import { getSessionFromRequest, AuthorizationError, requireSession } from '@/lib/auth';
 import { audit } from '@/lib/audit';
 import { getMobileMoneyAdapter, normalizeMsisdn } from '@/lib/mobile-money';
@@ -20,21 +23,35 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     if (e instanceof AuthorizationError) return NextResponse.json({ error: e.message }, { status: e.status });
     throw e;
   }
-  let body: unknown = {};
-  try { body = await req.json(); } catch { /* allow empty body */ }
+  const body = await readJsonBody(req);
   const parsed = schema.safeParse(body ?? {});
   if (!parsed.success) return NextResponse.json({ error: 'Invalid input' }, { status: 400 });
 
-  const loan = await prisma.loan.findUnique({ where: { id: params.id }, include: { borrower: true } });
+  const loanRows = await db
+    .select({
+      id: loans.id,
+      loanNo: loans.loanNo,
+      status: loans.status,
+      principalZMW: loans.principalZMW,
+      borrowerId: loans.borrowerId,
+      borrowerFirstName: borrowers.firstName,
+      borrowerLastName: borrowers.lastName,
+      borrowerPhone: borrowers.phone,
+      borrowerNrcNumber: borrowers.nrcNumber,
+    })
+    .from(loans)
+    .innerJoin(borrowers, eq(loans.borrowerId, borrowers.id))
+    .where(eq(loans.id, params.id))
+    .limit(1);
+  const loan = loanRows[0];
   if (!loan) return NextResponse.json({ error: 'Loan not found' }, { status: 404 });
   if (loan.status !== 'PENDING_DISBURSEMENT') {
     return NextResponse.json({ error: `Loan is in status ${loan.status} — cannot disburse` }, { status: 400 });
   }
 
-  // If mobile money, initiate disbursement via adapter
   let mmRef: string | null = null;
   if (parsed.data.channel === 'MOBILE_MONEY') {
-    const msisdn = parsed.data.msisdn ? normalizeMsisdn(parsed.data.msisdn) : normalizeMsisdn(loan.borrower.phone);
+    const msisdn = parsed.data.msisdn ? normalizeMsisdn(parsed.data.msisdn) : normalizeMsisdn(loan.borrowerPhone);
     const adapter = getMobileMoneyAdapter();
     const result = await adapter.requestDisbursement({
       direction: 'OUTBOUND',
@@ -46,18 +63,14 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     mmRef = result.externalId;
   }
 
-  await prisma.loan.update({
-    where: { id: loan.id },
-    data: {
-      status: 'ACTIVE',
-      disbursedAt: new Date(),
-      disbursementChannel: parsed.data.channel,
-      disbursementRef: mmRef,
-      firstPaymentDue: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-    },
-  });
+  await db.update(loans).set({
+    status: 'ACTIVE',
+    disbursedAt: new Date(),
+    disbursementChannel: parsed.data.channel,
+    disbursementRef: mmRef,
+    firstPaymentDue: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+  }).where(eq(loans.id, loan.id));
 
-  // CTR trigger for large cash disbursements
   if (parsed.data.channel === 'CASH' && loan.principalZMW / 27 >= 10_000) {
     await openCtr({
       borrowerId: loan.borrowerId,
@@ -67,8 +80,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       amountZMW: loan.principalZMW,
       transactionDate: new Date(),
       transactionType: 'WITHDRAWAL',
-      customerName: `${loan.borrower.firstName} ${loan.borrower.lastName}`,
-      customerNrc: loan.borrower.nrcNumber,
+      customerName: `${loan.borrowerFirstName} ${loan.borrowerLastName}`,
+      customerNrc: loan.borrowerNrcNumber,
     });
   }
 

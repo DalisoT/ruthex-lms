@@ -7,7 +7,9 @@
  * Useful for both internal governance and BOZ prudential inspections.
  */
 import crypto from 'crypto';
-import { prisma } from './db';
+import { desc, asc } from 'drizzle-orm';
+import { db } from './db';
+import { auditLogs } from './db/schema';
 
 export type AuditAction =
   | 'LOGIN' | 'LOGIN_FAILED' | 'LOGOUT'
@@ -43,11 +45,12 @@ export interface AuditInput {
 export async function audit(input: AuditInput): Promise<void> {
   const occurredAt = new Date();
   // Find the previous audit row (for hash chaining)
-  const prev = await prisma.auditLog.findFirst({
-    orderBy: { occurredAt: 'desc' },
-    select: { hash: true },
-  });
-  const prevHash = prev?.hash ?? null;
+  const prevRows = await db
+    .select({ hash: auditLogs.hash })
+    .from(auditLogs)
+    .orderBy(desc(auditLogs.occurredAt))
+    .limit(1);
+  const prevHash = prevRows[0]?.hash ?? null;
   const base = [
     prevHash ?? '',
     input.action,
@@ -58,19 +61,17 @@ export async function audit(input: AuditInput): Promise<void> {
     JSON.stringify(input.meta ?? {}),
   ].join('|');
   const hash = sha256(base);
-  await prisma.auditLog.create({
-    data: {
-      occurredAt,
-      userId: input.userId ?? null,
-      action: input.action,
-      entity: input.entity,
-      entityId: input.entityId ?? null,
-      ipAddress: input.ipAddress ?? null,
-      userAgent: input.userAgent ?? null,
-      prevHash,
-      hash,
-      meta: input.meta ? JSON.stringify(input.meta) : null,
-    },
+  await db.insert(auditLogs).values({
+    occurredAt,
+    userId: input.userId ?? null,
+    action: input.action,
+    entity: input.entity,
+    entityId: input.entityId ?? null,
+    ipAddress: input.ipAddress ?? null,
+    userAgent: input.userAgent ?? null,
+    prevHash,
+    hash,
+    meta: input.meta ? JSON.stringify(input.meta) : null,
   });
 }
 
@@ -81,10 +82,20 @@ export async function audit(input: AuditInput): Promise<void> {
 export async function verifyAuditChain(): Promise<{ ok: true } | { ok: false; brokenAt: string }> {
   let cursor = 0;
   let prevHash: string | null = null;
-  const rows = await prisma.auditLog.findMany({
-    orderBy: { occurredAt: 'asc' },
-    select: { id: true, occurredAt: true, action: true, entity: true, entityId: true, userId: true, meta: true, prevHash: true, hash: true },
-  });
+  const rows = await db
+    .select({
+      id: auditLogs.id,
+      occurredAt: auditLogs.occurredAt,
+      action: auditLogs.action,
+      entity: auditLogs.entity,
+      entityId: auditLogs.entityId,
+      userId: auditLogs.userId,
+      meta: auditLogs.meta,
+      prevHash: auditLogs.prevHash,
+      hash: auditLogs.hash,
+    })
+    .from(auditLogs)
+    .orderBy(asc(auditLogs.occurredAt));
   for (const row of rows) {
     cursor += 1;
     if ((row.prevHash ?? null) !== prevHash) {

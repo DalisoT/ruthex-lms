@@ -1,4 +1,7 @@
-import { prisma } from '@/lib/db';
+import { sql, eq, desc, asc, and, or, inArray, ne, gte, lte, gt, lt, isNull, like, ilike } from 'drizzle-orm';
+import { db } from '@/lib/db';
+import { borrowers, loans, repayments, amlAlerts, auditLogs, users, branches, loanApplications, loanProducts, notifications } from '@/lib/db/schema';
+
 import { generateCapitalAdequacyReport, generateLiquidityReport, generateAssetQualityReport, generateLargeExposuresReport, generateRelatedPartyReport, snapshotBozReport, zmw } from '@/lib/boz-reports';
 import { formatPercent, formatDate } from '@/lib/utils';
 import { MFI_MIN_CAR_PCT } from '@/lib/types';

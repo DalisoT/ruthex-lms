@@ -9,7 +9,9 @@ import bcrypt from 'bcryptjs';
 import { SignJWT, jwtVerify } from 'jose';
 import { cookies } from 'next/headers';
 import { NextRequest } from 'next/server';
-import { prisma } from './db';
+import { eq } from 'drizzle-orm';
+import { db } from './db';
+import { users } from './db/schema';
 import { Role } from './types';
 
 const SESSION_COOKIE = 'ruthex_session';
@@ -117,14 +119,15 @@ export async function getCurrentSession(): Promise<SessionPayload | null> {
 
 /** Login by email + password. Returns session token or null. */
 export async function login(email: string, password: string): Promise<{ token: string; payload: SessionPayload } | null> {
-  const user = await prisma.user.findUnique({ where: { email } });
+  const rows = await db.select().from(users).where(eq(users.email, email)).limit(1);
+  const user = rows[0];
   if (!user || !user.active) return null;
   const ok = await verifyPassword(password, user.passwordHash);
   if (!ok) {
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { failedLoginCount: { increment: 1 } },
-    });
+    await db
+      .update(users)
+      .set({ failedLoginCount: (user.failedLoginCount ?? 0) + 1 })
+      .where(eq(users.id, user.id));
     return null;
   }
   const payload: SessionPayload = {
@@ -134,10 +137,10 @@ export async function login(email: string, password: string): Promise<{ token: s
     branchId: user.branchId,
   };
   const token = await issueSessionToken(payload);
-  await prisma.user.update({
-    where: { id: user.id },
-    data: { failedLoginCount: 0, lastLoginAt: new Date() },
-  });
+  await db
+    .update(users)
+    .set({ failedLoginCount: 0, lastLoginAt: new Date() })
+    .where(eq(users.id, user.id));
   return { token, payload };
 }
 

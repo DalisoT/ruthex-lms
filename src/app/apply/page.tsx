@@ -1,16 +1,17 @@
 import PublicApplyForm from './PublicApplyForm';
-import { prisma } from '@/lib/db';
+import { eq, asc } from 'drizzle-orm';
+import { db } from '@/lib/db';
+import { loanProducts } from '@/lib/db/schema';
 
 export const metadata = { title: 'Apply for a loan — RUTHEX' };
-// This page fetches live loan products from the DB — it must be rendered at
-// request time, not pre-rendered at build time (the DB is empty during build).
 export const dynamic = 'force-dynamic';
 
 export default async function PublicApplyPage() {
-  const products = await prisma.loanProduct.findMany({
-    where: { active: true },
-    orderBy: { name: 'asc' },
-  });
+  const products = await db
+    .select()
+    .from(loanProducts)
+    .where(eq(loanProducts.active, true))
+    .orderBy(asc(loanProducts.name));
   return (
     <PublicApplyForm
       products={products.map((p) => ({

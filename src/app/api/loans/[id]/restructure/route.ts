@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/db';
+import { eq, sql } from 'drizzle-orm';
+import { db } from '@/lib/db';
+import { loans } from '@/lib/db/schema';
 import { getSessionFromRequest, AuthorizationError, requireSession } from '@/lib/auth';
 import { audit } from '@/lib/audit';
 
@@ -12,19 +14,17 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     if (e instanceof AuthorizationError) return NextResponse.json({ error: e.message }, { status: e.status });
     throw e;
   }
-  const loan = await prisma.loan.findUnique({ where: { id: params.id } });
+  const rows = await db.select().from(loans).where(eq(loans.id, params.id)).limit(1);
+  const loan = rows[0];
   if (!loan) return NextResponse.json({ error: 'Loan not found' }, { status: 404 });
   if (loan.status === 'CLOSED' || loan.status === 'WRITTEN_OFF') {
     return NextResponse.json({ error: 'Cannot restructure a closed or written-off loan' }, { status: 400 });
   }
-  await prisma.loan.update({
-    where: { id: loan.id },
-    data: {
-      status: 'RESTRUCTURED',
-      restructureCount: { increment: 1 },
-      daysInArrears: 0, // restructuring resets days-in-arrears counter
-    },
-  });
+  await db.update(loans).set({
+    status: 'RESTRUCTURED',
+    restructureCount: sql`${loans.restructureCount} + 1`,
+    daysInArrears: 0,
+  }).where(eq(loans.id, loan.id));
   await audit({
     userId: session!.userId,
     action: 'LOAN_RESTRUCTURED',

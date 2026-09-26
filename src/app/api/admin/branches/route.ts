@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { readJsonBody } from '@/lib/request-body';
 import { z } from 'zod';
-import { prisma } from '@/lib/db';
+import { eq } from 'drizzle-orm';
+import { db } from '@/lib/db';
+import { branches } from '@/lib/db/schema';
 import { getSessionFromRequest, AuthorizationError } from '@/lib/auth';
 import { assertRole } from '@/lib/rbac';
 import { audit } from '@/lib/audit';
@@ -26,13 +29,13 @@ export async function POST(req: NextRequest) {
     if (e instanceof AuthorizationError) return NextResponse.json({ error: e.message }, { status: e.status });
     throw e;
   }
-  let body: unknown;
-  try { body = await req.json(); } catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }); }
+  const body = await readJsonBody(req);
+  if (body === null) return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   const parsed = schema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: 'Invalid input' }, { status: 400 });
-  const exists = await prisma.branch.findUnique({ where: { code: parsed.data.code } });
-  if (exists) return NextResponse.json({ error: 'Branch code already in use' }, { status: 409 });
-  const branch = await prisma.branch.create({ data: parsed.data });
+  const existing = await db.select().from(branches).where(eq(branches.code, parsed.data.code)).limit(1);
+  if (existing.length > 0) return NextResponse.json({ error: 'Branch code already in use' }, { status: 409 });
+  const [branch] = await db.insert(branches).values(parsed.data).returning();
   await audit({
     userId: session!.userId,
     action: 'CREATE_BRANCH',

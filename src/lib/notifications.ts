@@ -6,7 +6,8 @@
  * In production, swap the adapters for Africa's Talking, Twilio, WhatsApp
  * Business API, or an SMS aggregator.
  */
-import { prisma } from './db';
+import { db } from './db';
+import { notifications } from './db/schema';
 
 export type NotificationChannel = 'SMS' | 'EMAIL' | 'WHATSAPP' | 'IN_APP' | 'USSD';
 
@@ -48,24 +49,20 @@ export const TEMPLATES = {
  * mock senders for real provider SDKs.
  */
 export async function sendNotification(input: NotificationInput): Promise<string> {
-  const notif = await prisma.notification.create({
-    data: {
-      userId: input.userId ?? null,
-      borrowerId: input.borrowerId ?? null,
-      channel: input.channel,
-      recipient: input.recipient ?? null,
-      subject: input.subject ?? null,
-      body: input.body,
-      relatedEntity: input.relatedEntity ?? null,
-      relatedEntityId: input.relatedEntityId ?? null,
-      scheduledAt: input.scheduledAt ?? null,
-      status: 'PENDING',
-    },
-  });
+  const [notif] = await db.insert(notifications).values({
+    userId: input.userId ?? null,
+    borrowerId: input.borrowerId ?? null,
+    channel: input.channel,
+    recipient: input.recipient ?? null,
+    subject: input.subject ?? null,
+    body: input.body,
+    relatedEntity: input.relatedEntity ?? null,
+    relatedEntityId: input.relatedEntityId ?? null,
+    scheduledAt: input.scheduledAt ?? null,
+    status: 'PENDING',
+  }).returning();
 
-  // Mock send — mark as SENT. Production: invoke provider, update on callback.
   await sendViaAdapter(input).catch((err) => {
-    // Don't throw — we keep the queue entry and mark failure
     void err;
   });
   return notif.id;

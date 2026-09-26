@@ -10,9 +10,11 @@
  * Respond with a CON/END string per the gateway protocol.
  */
 import { NextRequest, NextResponse } from 'next/server';
+import { readJsonBody } from '@/lib/request-body';
 import { z } from 'zod';
 import { processUssd } from '@/lib/notifications';
-import { prisma } from '@/lib/db';
+import { db } from '@/lib/db';
+import { notifications } from '@/lib/db/schema';
 import { audit } from '@/lib/audit';
 
 const schema = z.object({
@@ -28,7 +30,7 @@ export async function POST(req: NextRequest) {
   let body: Record<string, string> = {};
   const contentType = req.headers.get('content-type') ?? '';
   if (contentType.includes('application/json')) {
-    const j = await req.json().catch(() => ({}));
+    const j = (await readJsonBody(req)) ?? {};
     body = j as Record<string, string>;
   } else {
     const form = await req.formData().catch(() => null);
@@ -52,16 +54,14 @@ export async function POST(req: NextRequest) {
   });
 
   // Log to DB for audit / analytics
-  await prisma.notification.create({
-    data: {
-      channel: 'USSD',
-      recipient: parsed.data.msisdn,
-      body: response,
-      status: 'SENT',
-      sentAt: new Date(),
-      relatedEntity: 'USSD',
-      relatedEntityId: parsed.data.sessionId,
-    },
+  await db.insert(notifications).values({
+    channel: 'USSD',
+    recipient: parsed.data.msisdn,
+    body: response,
+    status: 'SENT',
+    sentAt: new Date(),
+    relatedEntity: 'USSD',
+    relatedEntityId: parsed.data.sessionId,
   });
 
   return new NextResponse(response, { headers: { 'Content-Type': 'text/plain' } });

@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { readJsonBody } from '@/lib/request-body';
 import { z } from 'zod';
-import { prisma } from '@/lib/db';
+import { sql, eq } from 'drizzle-orm';
+import { db } from '@/lib/db';
+import { loanApplications, loanProducts, loans, loanApprovals, repaymentSchedule } from '@/lib/db/schema';
 import { getSessionFromRequest, AuthorizationError } from '@/lib/auth';
 import { assertRole } from '@/lib/rbac';
 import { audit } from '@/lib/audit';
@@ -23,38 +26,47 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     if (e instanceof AuthorizationError) return NextResponse.json({ error: e.message }, { status: e.status });
     throw e;
   }
-  let body: unknown;
-  try { body = await req.json(); } catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }); }
+  const body = await readJsonBody(req);
+  if (body === null) return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   const parsed = schema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: 'Invalid input' }, { status: 400 });
 
-  const application = await prisma.loanApplication.findUnique({
-    where: { id: params.id },
-    include: { product: true, borrower: true },
-  });
+  const applicationRows = await db
+    .select({
+      id: loanApplications.id,
+      borrowerId: loanApplications.borrowerId,
+      productId: loanApplications.productId,
+      status: loanApplications.status,
+      minAmountZMW: loanProducts.minAmountZMW,
+      maxAmountZMW: loanProducts.maxAmountZMW,
+      minTermMonths: loanProducts.minTermMonths,
+      maxTermMonths: loanProducts.maxTermMonths,
+      interestMethod: loanProducts.interestMethod,
+      repaymentFrequency: loanProducts.repaymentFrequency,
+    })
+    .from(loanApplications)
+    .innerJoin(loanProducts, eq(loanApplications.productId, loanProducts.id))
+    .where(eq(loanApplications.id, params.id))
+    .limit(1);
+  const application = applicationRows[0];
   if (!application) return NextResponse.json({ error: 'Application not found' }, { status: 404 });
   if (application.status !== 'UNDER_REVIEW') {
     return NextResponse.json({ error: `Application is ${application.status} — cannot decide` }, { status: 400 });
   }
 
   if (parsed.data.decision === 'REJECTED') {
-    await prisma.loanApplication.update({
-      where: { id: application.id },
-      data: {
-        status: 'REJECTED',
-        rejectionReason: parsed.data.reason ?? 'No reason provided',
-        decisionedAt: new Date(),
-        decidedById: session!.userId,
-      },
-    });
-    await prisma.loanApproval.create({
-      data: {
-        applicationId: application.id,
-        approverId: session!.userId,
-        level: 'CREDIT_OFFICER',
-        decision: 'REJECTED',
-        reason: parsed.data.reason ?? '',
-      },
+    await db.update(loanApplications).set({
+      status: 'REJECTED',
+      rejectionReason: parsed.data.reason ?? 'No reason provided',
+      decisionedAt: new Date(),
+      decidedById: session!.userId,
+    }).where(eq(loanApplications.id, application.id));
+    await db.insert(loanApprovals).values({
+      applicationId: application.id,
+      approverId: session!.userId,
+      level: 'CREDIT_OFFICER',
+      decision: 'REJECTED',
+      reason: parsed.data.reason ?? '',
     });
     await audit({
       userId: session!.userId,
@@ -66,92 +78,82 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ ok: true });
   }
 
-  // Approve path: validate amounts and persist the active loan
   if (!parsed.data.approvedAmountZMW || !parsed.data.approvedTermMonths || parsed.data.approvedRatePct == null) {
     return NextResponse.json({ error: 'Approve requires approved amount, term, and rate' }, { status: 400 });
   }
-  const product = application.product;
-  if (parsed.data.approvedAmountZMW < product.minAmountZMW || parsed.data.approvedAmountZMW > product.maxAmountZMW) {
+  if (parsed.data.approvedAmountZMW < application.minAmountZMW || parsed.data.approvedAmountZMW > application.maxAmountZMW) {
     return NextResponse.json({ error: 'Approved amount outside product limits' }, { status: 400 });
   }
-  if (parsed.data.approvedTermMonths < product.minTermMonths || parsed.data.approvedTermMonths > product.maxTermMonths) {
+  if (parsed.data.approvedTermMonths < application.minTermMonths || parsed.data.approvedTermMonths > application.maxTermMonths) {
     return NextResponse.json({ error: 'Approved term outside product limits' }, { status: 400 });
   }
 
-  const loanCount = await prisma.loan.count();
-  const loanNo = nextLoanNo(loanCount + 1);
+  const loanCountRows = await db.select({ c: sql<number>`count(*)::int` }).from(loans);
+  const loanNo = nextLoanNo((loanCountRows[0]?.c ?? 0) + 1);
 
   const startDate = new Date();
   const installments = buildAmortization(
     parsed.data.approvedAmountZMW,
     parsed.data.approvedRatePct,
     parsed.data.approvedTermMonths,
-    product.repaymentFrequency as any,
+    application.repaymentFrequency as any,
     startDate,
-    product.interestMethod as any
+    application.interestMethod as any
   );
   const installmentAmount = installments[0]?.totalDue ?? parsed.data.approvedAmountZMW;
   const firstDue = installments[0]?.dueDate ?? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
   const maturity = installments[installments.length - 1]?.dueDate ?? new Date(Date.now() + parsed.data.approvedTermMonths * 30 * 24 * 60 * 60 * 1000);
   const totalRepayable = installments.reduce((s, i) => s + i.totalDue, 0);
 
-  const loan = await prisma.loan.create({
-    data: {
-      loanNo,
-      borrowerId: application.borrowerId,
-      productId: product.id,
-      principalZMW: parsed.data.approvedAmountZMW,
-      interestRateAnnualPct: parsed.data.approvedRatePct,
-      interestMethod: product.interestMethod,
-      termMonths: parsed.data.approvedTermMonths,
-      repaymentFrequency: product.repaymentFrequency,
-      installmentZMW: installmentAmount,
-      totalRepayableZMW: totalRepayable,
-      firstPaymentDue: firstDue,
-      maturityDate: maturity,
-      status: 'PENDING_DISBURSEMENT',
-      principalOutstandingZMW: parsed.data.approvedAmountZMW,
-      interestOutstandingZMW: 0,
-      feesOutstandingZMW: 0,
-      totalOutstandingZMW: parsed.data.approvedAmountZMW,
-      pricingOverrideReason: parsed.data.reason ?? null,
-    },
-  });
-  for (const inst of installments) {
-    await prisma.repaymentSchedule.create({
-      data: {
-        loanId: loan.id,
-        installmentNo: inst.installmentNo,
-        dueDate: inst.dueDate,
-        principalDue: inst.principalDue,
-        interestDue: inst.interestDue,
-        feesDue: 0,
-        totalDue: inst.totalDue,
-      },
-    });
+  const [loan] = await db.insert(loans).values({
+    loanNo,
+    borrowerId: application.borrowerId,
+    productId: application.productId,
+    principalZMW: parsed.data.approvedAmountZMW,
+    interestRateAnnualPct: parsed.data.approvedRatePct,
+    interestMethod: application.interestMethod,
+    termMonths: parsed.data.approvedTermMonths,
+    repaymentFrequency: application.repaymentFrequency,
+    installmentZMW: installmentAmount,
+    totalRepayableZMW: totalRepayable,
+    firstPaymentDue: firstDue,
+    maturityDate: maturity,
+    status: 'PENDING_DISBURSEMENT',
+    principalOutstandingZMW: parsed.data.approvedAmountZMW,
+    interestOutstandingZMW: 0,
+    feesOutstandingZMW: 0,
+    totalOutstandingZMW: parsed.data.approvedAmountZMW,
+    pricingOverrideReason: parsed.data.reason ?? null,
+  }).returning();
+
+  if (installments.length > 0) {
+    await db.insert(repaymentSchedule).values(installments.map((inst) => ({
+      loanId: loan.id,
+      installmentNo: inst.installmentNo,
+      dueDate: inst.dueDate,
+      principalDue: inst.principalDue,
+      interestDue: inst.interestDue,
+      feesDue: 0,
+      totalDue: inst.totalDue,
+    })));
   }
 
-  await prisma.loanApplication.update({
-    where: { id: application.id },
-    data: {
-      status: 'APPROVED',
-      approvedAmountZMW: parsed.data.approvedAmountZMW,
-      approvedTermMonths: parsed.data.approvedTermMonths,
-      approvedRatePct: parsed.data.approvedRatePct,
-      decisionedAt: new Date(),
-      decidedById: session!.userId,
-      loanId: loan.id,
-    },
-  });
+  await db.update(loanApplications).set({
+    status: 'APPROVED',
+    approvedAmountZMW: parsed.data.approvedAmountZMW,
+    approvedTermMonths: parsed.data.approvedTermMonths,
+    approvedRatePct: parsed.data.approvedRatePct,
+    decisionedAt: new Date(),
+    decidedById: session!.userId,
+    loanId: loan.id,
+  }).where(eq(loanApplications.id, application.id));
 
-  await prisma.loanApproval.create({
-    data: {
-      applicationId: application.id,
-      approverId: session!.userId,
-      level: 'CREDIT_OFFICER',
-      decision: 'APPROVED',
-      reason: parsed.data.reason ?? '',
-    },
+  await db.insert(loanApprovals).values({
+    applicationId: application.id,
+    approverId: session!.userId,
+    level: 'CREDIT_OFFICER',
+    decision: 'APPROVED',
+    reason: parsed.data.reason ?? '',
   });
 
   await audit({

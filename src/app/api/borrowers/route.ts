@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { readJsonBody } from '@/lib/request-body';
 import { z } from 'zod';
-import { prisma } from '@/lib/db';
+import { sql, or, ilike } from 'drizzle-orm';
+import { db } from '@/lib/db';
+import { borrowers } from '@/lib/db/schema';
 import { getSessionFromRequest, AuthorizationError, requireSession } from '@/lib/auth';
 import { audit } from '@/lib/audit';
 import { nextBorrowerNo, normalizeNrc } from '@/lib/utils';
@@ -28,7 +31,7 @@ const schema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  let session: ReturnType<typeof getSessionFromRequest> extends Promise<infer T> ? T : never;
+  let session: Awaited<ReturnType<typeof getSessionFromRequest>>;
   try {
     session = await getSessionFromRequest(req);
     requireSession(session, ['ADMIN', 'BRANCH_MANAGER', 'CREDIT_OFFICER', 'LOAN_OFFICER']);
@@ -36,45 +39,41 @@ export async function POST(req: NextRequest) {
     if (e instanceof AuthorizationError) return NextResponse.json({ error: e.message }, { status: e.status });
     throw e;
   }
-
-  let body: unknown;
-  try { body = await req.json(); } catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }); }
+  const body = await readJsonBody(req);
+  if (body === null) return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   const parsed = schema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: 'Invalid input', details: parsed.error.flatten() }, { status: 400 });
   }
 
-  // Generate borrowerNo by counting current borrowers
-  const count = await prisma.borrower.count();
-  const borrowerNo = nextBorrowerNo(count + 1);
+  const countRows = await db.select({ c: sql<number>`count(*)::int` }).from(borrowers);
+  const borrowerNo = nextBorrowerNo((countRows[0]?.c ?? 0) + 1);
 
-  const borrower = await prisma.borrower.create({
-    data: {
-      borrowerNo,
-      firstName: parsed.data.firstName,
-      lastName: parsed.data.lastName,
-      middleName: parsed.data.middleName ?? null,
-      dateOfBirth: parsed.data.dateOfBirth ? new Date(parsed.data.dateOfBirth) : null,
-      gender: parsed.data.gender ?? null,
-      nrcNumber: parsed.data.nrcNumber ? normalizeNrc(parsed.data.nrcNumber) : null,
-      phone: parsed.data.phone,
-      phoneAlt: parsed.data.phoneAlt ?? null,
-      email: parsed.data.email || null,
-      addressLine1: parsed.data.addressLine1 ?? null,
-      city: parsed.data.city ?? null,
-      province: parsed.data.province ?? null,
-      district: parsed.data.district ?? null,
-      employmentStatus: parsed.data.employmentStatus ?? null,
-      employerName: parsed.data.employerName ?? null,
-      occupation: parsed.data.occupation ?? null,
-      monthlyIncomeZMW: parsed.data.monthlyIncomeZMW ?? null,
-      pepFlag: parsed.data.pepFlag ?? false,
-      notes: parsed.data.notes ?? null,
-      assignedOfficerId: session!.userId,
-      kycStatus: parsed.data.pepFlag ? 'IN_REVIEW' : 'PENDING',
-      kycRiskRating: parsed.data.pepFlag ? 'HIGH' : 'MEDIUM',
-    },
-  });
+  const [borrower] = await db.insert(borrowers).values({
+    borrowerNo,
+    firstName: parsed.data.firstName,
+    lastName: parsed.data.lastName,
+    middleName: parsed.data.middleName ?? null,
+    dateOfBirth: parsed.data.dateOfBirth ? new Date(parsed.data.dateOfBirth) : null,
+    gender: parsed.data.gender ?? null,
+    nrcNumber: parsed.data.nrcNumber ? normalizeNrc(parsed.data.nrcNumber) : null,
+    phone: parsed.data.phone,
+    phoneAlt: parsed.data.phoneAlt ?? null,
+    email: parsed.data.email || null,
+    addressLine1: parsed.data.addressLine1 ?? null,
+    city: parsed.data.city ?? null,
+    province: parsed.data.province ?? null,
+    district: parsed.data.district ?? null,
+    employmentStatus: parsed.data.employmentStatus ?? null,
+    employerName: parsed.data.employerName ?? null,
+    occupation: parsed.data.occupation ?? null,
+    monthlyIncomeZMW: parsed.data.monthlyIncomeZMW ?? null,
+    pepFlag: parsed.data.pepFlag ?? false,
+    notes: parsed.data.notes ?? null,
+    assignedOfficerId: session!.userId,
+    kycStatus: parsed.data.pepFlag ? 'IN_REVIEW' : 'PENDING',
+    kycRiskRating: parsed.data.pepFlag ? 'HIGH' : 'MEDIUM',
+  }).returning();
 
   await audit({
     userId: session!.userId,
@@ -98,20 +97,26 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const q = url.searchParams.get('q') ?? '';
   const limit = Math.min(100, parseInt(url.searchParams.get('limit') ?? '25', 10));
-  const borrowers = await prisma.borrower.findMany({
-    where: q
-      ? {
-          OR: [
-            { firstName: { contains: q } },
-            { lastName: { contains: q } },
-            { borrowerNo: { contains: q } },
-            { phone: { contains: q } },
-          ],
-        }
-      : {},
-    take: limit,
-    orderBy: { createdAt: 'desc' },
-    select: { id: true, borrowerNo: true, firstName: true, lastName: true, phone: true, kycStatus: true },
-  });
-  return NextResponse.json({ borrowers });
+  const filter = q
+    ? or(
+        ilike(borrowers.firstName, `%${q}%`),
+        ilike(borrowers.lastName, `%${q}%`),
+        ilike(borrowers.borrowerNo, `%${q}%`),
+        ilike(borrowers.phone, `%${q}%`),
+      )
+    : undefined;
+  const rows = await db
+    .select({
+      id: borrowers.id,
+      borrowerNo: borrowers.borrowerNo,
+      firstName: borrowers.firstName,
+      lastName: borrowers.lastName,
+      phone: borrowers.phone,
+      kycStatus: borrowers.kycStatus,
+    })
+    .from(borrowers)
+    .where(filter)
+    .orderBy(sql`${borrowers.createdAt} DESC`)
+    .limit(limit);
+  return NextResponse.json({ borrowers: rows });
 }

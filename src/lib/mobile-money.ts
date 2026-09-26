@@ -10,7 +10,8 @@
  * "mock" provider is wired for local dev and tests.
  */
 import crypto from 'crypto';
-import { prisma } from './db';
+import { db } from './db';
+import { mobileMoneyTransactions } from './db/schema';
 import { MobileMoneyProvider } from './types';
 
 // -----------------------------------------------------------------------------
@@ -52,19 +53,17 @@ export class MockMobileMoneyAdapter implements MobileMoneyAdapter {
   async requestCollection(req: MobileMoneyRequest): Promise<MobileMoneyResponse> {
     const externalId = `MOCK-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
     // Persist pending txn
-    await prisma.mobileMoneyTransaction.create({
-      data: {
-        provider: this.provider,
-        externalId,
-        direction: req.direction,
-        amountZMW: req.amountZMW,
-        feesZMW: 0,
-        msisdn: req.msisdn,
-        accountRef: req.accountRef,
-        status: 'SUCCESSFUL', // mock auto-succeeds
-        repaymentId: req.repaymentId,
-        confirmedAt: new Date(),
-      },
+    await db.insert(mobileMoneyTransactions).values({
+      provider: this.provider,
+      externalId,
+      direction: req.direction,
+      amountZMW: req.amountZMW,
+      feesZMW: 0,
+      msisdn: req.msisdn,
+      accountRef: req.accountRef ?? null,
+      status: 'SUCCESSFUL', // mock auto-succeeds
+      repaymentId: req.repaymentId ?? null,
+      confirmedAt: new Date(),
     });
     return {
       externalId,

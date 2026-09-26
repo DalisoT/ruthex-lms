@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/db';
+import { eq } from 'drizzle-orm';
+import { db } from '@/lib/db';
+import { loans } from '@/lib/db/schema';
 import { getSessionFromRequest, AuthorizationError, requireSession } from '@/lib/auth';
 import { audit } from '@/lib/audit';
 
@@ -12,21 +14,18 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     if (e instanceof AuthorizationError) return NextResponse.json({ error: e.message }, { status: e.status });
     throw e;
   }
-  const loan = await prisma.loan.findUnique({ where: { id: params.id } });
+  const rows = await db.select().from(loans).where(eq(loans.id, params.id)).limit(1);
+  const loan = rows[0];
   if (!loan) return NextResponse.json({ error: 'Loan not found' }, { status: 404 });
-  await prisma.loan.update({
-    where: { id: loan.id },
-    data: {
-      status: 'WRITTEN_OFF',
-      // Recognize the provision already taken
-      eclProvisionZMW: loan.totalOutstandingZMW,
-      principalOutstandingZMW: 0,
-      interestOutstandingZMW: 0,
-      feesOutstandingZMW: 0,
-      totalOutstandingZMW: 0,
-      ifrs9Stage: 3,
-    },
-  });
+  await db.update(loans).set({
+    status: 'WRITTEN_OFF',
+    eclProvisionZMW: loan.totalOutstandingZMW,
+    principalOutstandingZMW: 0,
+    interestOutstandingZMW: 0,
+    feesOutstandingZMW: 0,
+    totalOutstandingZMW: 0,
+    ifrs9Stage: 3,
+  }).where(eq(loans.id, loan.id));
   await audit({
     userId: session!.userId,
     action: 'LOAN_WRITTEN_OFF',
